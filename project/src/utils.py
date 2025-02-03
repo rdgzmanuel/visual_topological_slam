@@ -1,0 +1,364 @@
+import os
+import random
+import torch
+import tarfile
+import requests
+import shutil
+import numpy as np
+from torchvision import transforms
+from PIL import Image
+from torch.utils.data import Dataset, DataLoader, random_split
+from torch.jit import RecursiveScriptModule
+
+
+class COLDataset(Dataset):
+    """
+    This class is the COLD Dataset.
+    """
+
+    def __init__(self, path: str) -> None:
+        """
+        Constructor of COLDataset.
+
+        Args:
+            path: path of the dataset.
+        """
+
+        transform = transforms.Compose([
+            transforms.Resize((224, 224)),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.5], std=[0.5])
+        ])
+        
+        labels_correspondence: dict[str, int] = {}
+        class_number: int = 0
+
+        self.images: list[torch.Tensor] = []
+        self.labels: list[int] = []
+
+        for image in os.listdir(path):
+            image_splitted: list[str] = image[:-5].split("_")  # Remove the .jpeg
+            label_name: str = image_splitted[-1]
+            if label_name not in labels_correspondence:
+                labels_correspondence[label_name] = class_number
+                class_number += 1
+
+            image_path: str = os.path.join(path, image)
+            open_image = Image.open(image_path).convert("RGB")  # Ensure it's in RGB mode
+            tensor_image: torch.Tensor = transform(open_image)
+            self.images.append(tensor_image)
+            self.labels.append(labels_correspondence[label_name])
+
+    def __len__(self) -> int:
+        return len(self.labels)
+
+    def __getitem__(self, index: int) -> tuple[torch.Tensor, int]:
+        image: torch.Tensor = self.images[index]
+        label: int = self.labels[index]
+
+        return image, label
+
+
+def load_cold_data(
+    seq_data_path: str, data_path: str, batch_size: int = 128, num_workers: int = 4, train: bool = True
+) -> tuple[DataLoader, DataLoader, DataLoader]:
+    """
+    This function returns three Dataloaders, one for train data, one for val data and
+    other for testing data for COLD dataset.
+
+    Args:
+        path: path of the dataset.
+        color_space: color_space for loading the images.
+        batch_size: batch size for dataloaders. Default value: 128.and
+        num_workers: number of workers for loading data.
+            Default value: 0.
+
+    Returns:
+        tuple of dataloaders, train, val and test in respective order.
+    """
+
+    if not os.path.isdir(f"{seq_data_path}"):
+        os.makedirs(f"{seq_data_path}")
+        download_cold_data(seq_data_path)
+    
+    if not os.path.isdir(f"{data_path}"):
+        os.makedirs(f"{data_path}")
+        prepare_data(seq_data_path, data_path)
+
+    # create datasets
+    train_dataloader = None
+    val_dataloader = None
+    test_dataloader = None
+
+    if train:
+        train_dataset: Dataset = COLDataset(f"{data_path}/train")
+        val_dataset: Dataset
+        train_dataset, val_dataset = random_split(train_dataset, [0.8, 0.2])
+
+        train_dataloader: DataLoader = DataLoader(
+            train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers
+        )
+        val_dataloader: DataLoader = DataLoader(
+            val_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers
+        )
+    else:
+        test_dataset: Dataset = COLDataset(f"{data_path}/test")
+        
+        test_dataloader: DataLoader = DataLoader(
+            test_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers
+        )
+
+    return train_dataloader, val_dataloader, test_dataloader
+
+
+def download_cold_data(path: str) -> None:
+    """
+    Downloads and extracts the COLD dataset, keeping only specific subfolders inside each sequence folder.
+
+    Args:
+        path: Path to save the dataset.
+    """
+    
+    base_url: str = "https://www.cas.kth.se/COLD/db/"
+    labs: list[str] = ["cold-freiburg", "cold-ljubljana", "cold-saarbruecken"]
+    parts: list[str] = ["part_a", "part_b"]
+    weather_conditions: list[str] = ["cloudy1", "cloudy2", "cloudy3", "cloudy4", "cloudy5",
+                                     "sunny1", "sunny2", "sunny3", "sunny4",
+                                     "night1", "night2", "night3"]
+
+    os.makedirs(path, exist_ok=True)
+
+    keep_folders: list[str] = ["localization", "odom_scans", "std_cam"]
+
+    for lab in labs:
+        for part in parts:
+            for seq_num in range(1, 5):
+                for weather in weather_conditions:
+                    seq_name: str = f"seq{seq_num}_{weather}"
+                    save_name: str = f"{lab}_{part}_seq{seq_num}_{weather}"
+                    url: str = f"{base_url}{lab}/{part}/{seq_name}.tar"
+                    target_tar_path: str = os.path.join(path, f"{seq_name}.tar")
+                    extracted_seq_path: str = os.path.join(path, save_name)
+
+                    if os.path.exists(extracted_seq_path):
+                        print(f"Skipping {save_name}, already exists.")
+                        continue
+
+                    print(f"Downloading {save_name} from {url}...")
+                    response = requests.get(url, stream=True)
+                    if response.status_code == 200:
+                        with open(target_tar_path, "wb") as file:
+                            for chunk in response.iter_content(chunk_size=8192):
+                                file.write(chunk)
+                    else:
+                        print(f"Failed to download {save_name}. HTTP status code: {response.status_code}")
+                        continue
+
+                    print(f"Extracting {save_name}...")
+                    with tarfile.open(target_tar_path, "r:") as tar:
+                        tar.extractall(path=extracted_seq_path)
+
+                    extracted_contents = os.listdir(extracted_seq_path)
+                    if len(extracted_contents) == 1 and os.path.isdir(os.path.join(extracted_seq_path, extracted_contents[0])):
+                        nested_folder = os.path.join(extracted_seq_path, extracted_contents[0])
+                        print(f"Moving contents from nested folder {nested_folder} to {extracted_seq_path}...")
+
+                        for item in os.listdir(nested_folder):
+                            shutil.move(os.path.join(nested_folder, item), extracted_seq_path)
+
+                        os.rmdir(nested_folder)
+
+                    if os.path.exists(extracted_seq_path):
+                        for subfolder in os.listdir(extracted_seq_path):
+                            subfolder_path = os.path.join(extracted_seq_path, subfolder)
+                            if os.path.isdir(subfolder_path) and subfolder not in keep_folders:
+                                print(f"Removing {subfolder_path}...")
+                                shutil.rmtree(subfolder_path)
+                    else:
+                        print(f"Expected sequence folder not found at: {extracted_seq_path}")
+
+                    os.remove(target_tar_path)
+
+    print("Dataset downloaded, extracted and filtered successfully.")
+    return None
+
+
+def prepare_data(seq_data_path: str, final_data_path: str) -> None:
+    """
+    Copies images to a new folder while preserving their original names and appending class labels.
+    77 sequences in total: 64 for training and leaving 13 of them for testing (83-17):
+    Only testing with std path, not ext
+    - 32 Saarbruecken: 5 for testing
+    - 26 Freiburg: 5 for testing
+    - 19 Ljubljana: 3 for testing
+    """
+    sequences: str = os.listdir(seq_data_path)
+    
+    test_sequences: set[str] = {
+        "cold-saarbruecken_part_a_seq1_cloudy1",
+        "cold-saarbruecken_part_a_seq1_night1",
+        "cold-saarbruecken_part_b_seq3_cloudy1",
+        "cold-saarbruecken_part_b_seq3_night1",
+        "cold-freiburg_part_a_seq1_cloudy1",
+        "cold-freiburg_part_a_seq1_night1",
+        "cold-freiburg_part_a_seq1_sunny1",
+        "cold-freiburg_part_b_seq3_cloudy1",
+        "cold-freiburg_part_b_seq3_sunny1",
+        "cold-ljubljana_part_a_seq1_cloudy1",
+        "cold-ljubljana_part_a_seq1_night1",
+        "cold-ljubljana_part_a_seq1_sunny1"
+    }
+
+    places_file_name: str = "localization/places.lst"
+    camera_folder: str = "std_cam"
+
+    for sequence in sequences:
+        if sequence.startswith("."):
+            continue
+
+        sequence_path: str = os.path.join(seq_data_path, sequence)
+        places_path: str = os.path.join(sequence_path, places_file_name)
+        pictures_path: str = os.path.join(sequence_path, camera_folder)
+
+        picture_to_class: dict[str: str] = {}
+        with open(places_path, "r") as file:
+            for line in file:
+                parts: list[str] = line.strip().split()
+                if len(parts) == 2:
+                    picture_to_class[parts[0]] = parts[1]
+
+        train_test: str = "test" if sequence in test_sequences else "train"
+        data_folder_path: str = os.path.join(final_data_path, train_test)
+        os.makedirs(data_folder_path, exist_ok=True)
+
+        for picture in os.listdir(pictures_path):
+            if picture in picture_to_class:
+                picture_class: str = picture_to_class[picture]
+                original_name, ext = os.path.splitext(picture)
+                new_name: str = f"{original_name}_{picture_class}{ext}"
+
+                dest_path: str = os.path.join(data_folder_path, new_name)
+                if not os.path.exists(dest_path):
+                    src_path: str = os.path.join(pictures_path, picture)
+                    shutil.copy(src_path, dest_path)
+        
+        print(f"Sequence {sequence} completed.")
+    
+    return None
+
+
+
+class Accuracy:
+    """
+    This class tracks the accuracy of predictions.
+
+    Attributes:
+        correct (int): Number of correct predictions.
+        total (int): Total number of examples evaluated.
+    """
+
+    def __init__(self) -> None:
+        """Initializes correct and total counts to zero."""
+        self.correct: int = 0
+        self.total: int= 0
+
+    def update(self, logits: torch.Tensor, labels: torch.Tensor) -> None:
+        """
+        Updates the count of correct and total predictions.
+
+        Args:
+            logits (torch.Tensor): Model outputs of shape [batch, num_classes].
+            labels (torch.Tensor): Ground truth labels of shape [batch].
+        """
+        predictions: torch.Tensor = logits.argmax(dim=1)
+        self.correct += predictions.eq(labels).sum().item()
+        self.total += labels.size(0)
+
+    def compute(self) -> float:
+        """
+        Computes the accuracy.
+
+        Returns:
+            float: Accuracy as a value between 0 and 1.
+        """
+        return self.correct / self.total if self.total > 0 else 0.0
+
+    def reset(self) -> None:
+        """Resets the correct and total counts to zero."""
+        self.correct = 0
+        self.total = 0
+
+
+def save_model(model: torch.nn.Module, name: str) -> None:
+    """
+    This function saves a model in the 'models' folder as a torch.jit.
+    It should create the 'models' if it doesn't already exist.
+
+    Args:
+        model: pytorch model.
+        name: name of the model (without the extension, e.g. name.pt).
+    """
+
+    # create folder if it does not exist
+    if not os.path.isdir("models"):
+        os.makedirs("models")
+
+    # save scripted model
+    model_scripted: RecursiveScriptModule = torch.jit.script(model.cpu())
+    model_scripted.save(f"models/{name}.pt")
+
+    return None
+
+
+def load_model(name: str) -> RecursiveScriptModule:
+    """
+    This function is to load a model from the 'models' folder.
+
+    Args:
+        name: name of the model to load.
+
+    Returns:
+        model in torchscript.
+    """
+
+    # define model
+    model: RecursiveScriptModule = torch.jit.load(f"models/{name}.pt")
+
+    return model
+
+
+def set_seed(seed: int) -> None:
+    """
+    This function sets a seed and ensure a deterministic behavior.
+
+    Args:
+        seed: seed number to fix radomness.
+    """
+
+    # set seed in numpy and random
+    np.random.seed(seed)
+    random.seed(seed)
+
+    # set seed and deterministic algorithms for torch
+    torch.manual_seed(seed)
+    torch.use_deterministic_algorithms(True, warn_only=True)
+
+    # Ensure all operations are deterministic on GPU
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+    # for deterministic behavior on cuda >= 10.2
+    os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+
+    return None
+
+
+if __name__ == "__main__":
+
+    path: str = "seq_data"
+    data_path: str = "data"
+    # download_cold_data(path)
+    # prepare_data(path, data_path)
+    load_cold_data(data_path)
