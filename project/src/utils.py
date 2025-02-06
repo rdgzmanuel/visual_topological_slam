@@ -30,8 +30,20 @@ class COLDataset(Dataset):
             transforms.Normalize(mean=[0.5], std=[0.5])
         ])
         
-        labels_correspondence: dict[str, int] = {}
-        class_number: int = 0
+        labels_correspondence: dict[str, int] = {
+            "CR": 0,
+            "2PO": 1,
+            "RL": 2,
+            "TL": 3,
+            "TR": 4,
+            "LO": 5,
+            "1PO": 6,
+            "KT": 7,
+            "CNR": 8,
+            "PA": 9,
+            "LAB": 10,
+            "ST": 11
+        }
 
         self.images: list[torch.Tensor] = []
         self.labels: list[int] = []
@@ -39,9 +51,6 @@ class COLDataset(Dataset):
         for image in os.listdir(path):
             image_splitted: list[str] = image[:-5].split("_")  # Remove the .jpeg
             label_name: str = image_splitted[-1]
-            if label_name not in labels_correspondence:
-                labels_correspondence[label_name] = class_number
-                class_number += 1
 
             image_path: str = os.path.join(path, image)
             open_image = Image.open(image_path).convert("RGB")  # Ensure it's in RGB mode
@@ -81,9 +90,9 @@ def load_cold_data(
         # os.makedirs(f"{seq_data_path}")
     # download_cold_data(seq_data_path)
     
-    # if not os.path.isdir(f"{data_path}"):
-        # os.makedirs(f"{data_psath}")
-    # prepare_data(seq_data_path, data_path)
+    if not os.path.isdir(f"{data_path}"):
+        os.makedirs(f"{data_path}")
+    prepare_data(seq_data_path, data_path)
 
     # create datasets
     train_dataloader = None
@@ -209,6 +218,21 @@ def prepare_data(seq_data_path: str, final_data_path: str) -> None:
         "cold-ljubljana_part_a_seq1_sunny1"
     }
 
+    classes: list[str] = [
+        "CR",
+        "2PO",
+        "RL",
+        "TL",
+        "TR",
+        "LO",
+        "1PO",
+        "KT",
+        "CNR",
+        "PA",
+        "LAB",
+        "ST"
+    ]
+
     places_file_name: str = "localization/places.lst"
     camera_folder: str = "std_cam"
 
@@ -225,7 +249,11 @@ def prepare_data(seq_data_path: str, final_data_path: str) -> None:
             for line in file:
                 parts: list[str] = line.strip().split()
                 if len(parts) == 2:
-                    picture_to_class[parts[0]] = parts[1]
+                    concrete_place: str = parts[1]
+                    for class_ in classes:
+                        if class_ in concrete_place:
+                            picture_to_class[parts[0]] = class_
+                            break
 
         train_test: str = "test" if sequence in test_sequences else "train"
         data_folder_path: str = os.path.join(final_data_path, train_test)

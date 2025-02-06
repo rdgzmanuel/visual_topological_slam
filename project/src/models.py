@@ -13,7 +13,7 @@ class CNNExtractor(nn.Module):
     classifier: nn.Sequential
     last_features: torch.Tensor
 
-    def __init__(self, output_size: int = 10, dropout: float = 0.5) -> None:
+    def __init__(self, output_size: int = 12, dropout: float = 0.5) -> None:
         """
         Constructor for CNNExtractor class.
 

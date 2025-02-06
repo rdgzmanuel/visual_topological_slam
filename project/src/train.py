@@ -29,7 +29,7 @@ torch.set_num_threads(8)
 # static variables
 SEQ_DATA_PATH: str = "seq_data"
 DATA_PATH: str = "data"
-NUMBER_OF_CLASSES: int = 10
+NUMBER_OF_CLASSES: int = 12
 
 def main() -> None:
     """
@@ -49,22 +49,6 @@ def main() -> None:
     train_data: DataLoader
     val_data: DataLoader
     train_data, val_data, _ = load_cold_data(SEQ_DATA_PATH, DATA_PATH, batch_size=batch_size)
-
-    classes = []
-    images_path = "data"
-    data_path = "train"
-    counter = 0
-   
-    for image in os.listdir(os.path.join(images_path, data_path)):
-        parts = image.split("_")
-        class_ = parts[-1][:-5]
-
-        if class_ not in classes:
-            classes.append(class_)
-            counter += 1
-    print(len(classes))
-    print(counter)
-    assert False
 
     # define name and writer
     name: str = "model_1"
