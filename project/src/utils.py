@@ -77,13 +77,13 @@ def load_cold_data(
         tuple of dataloaders, train, val and test in respective order.
     """
 
-    if not os.path.isdir(f"{seq_data_path}"):
-        os.makedirs(f"{seq_data_path}")
-        download_cold_data(seq_data_path)
+    # if not os.path.isdir(f"{seq_data_path}"):
+        # os.makedirs(f"{seq_data_path}")
+    # download_cold_data(seq_data_path)
     
-    if not os.path.isdir(f"{data_path}"):
-        os.makedirs(f"{data_path}")
-        prepare_data(seq_data_path, data_path)
+    # if not os.path.isdir(f"{data_path}"):
+        # os.makedirs(f"{data_psath}")
+    # prepare_data(seq_data_path, data_path)
 
     # create datasets
     train_dataloader = None
