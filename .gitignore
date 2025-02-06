@@ -1,3 +1,7 @@
 # Data folders
 project/seq_data/
 project/data/
+
+# Model folders
+project/runs/
+project/models/
