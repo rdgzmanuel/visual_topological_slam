@@ -23,6 +23,7 @@ torch.set_num_threads(8)
 
 # static variables
 DATA_PATH: str = "data"
+SEQ_DATA_PATH: str = "seq_data"
 
 
 def main(name: str) -> float:
@@ -31,7 +32,7 @@ def main(name: str) -> float:
     """
 
     test_data: DataLoader
-    _, _, test_data = load_cold_data(DATA_PATH, batch_size=128, train=False)
+    _, _, test_data = load_cold_data(seq_data_path=SEQ_DATA_PATH, data_path=DATA_PATH, batch_size=128, train=False)
 
     model: RecursiveScriptModule = load_model(name).to(device)
 

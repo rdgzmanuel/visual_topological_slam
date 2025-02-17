@@ -1,0 +1,29 @@
+{
+    "editor.formatOnSave": true,
+    "editor.rulers": [
+        100
+    ],
+    "editor.tabSize": 4,
+    "explorer.sortOrder": "type",
+    "files.associations": {
+        "*.repos": "yaml",
+        "*.world": "xml",
+        "*.xacro": "xml"
+    },
+    "python.analysis.extraPaths": [
+        "/opt/ros/humble/lib/python3.10/site-packages/",
+        "${workspaceFolder}/install/amr_msgs/lib/python3.10/site-packages"
+    ],
+    "python.autoComplete.extraPaths": [
+        "/opt/ros/humble/lib/python3.10/site-packages/",
+        "${workspaceFolder}/install/amr_msgs/lib/python3.10/site-packages"
+    ],
+    "python.envFile": "${workspaceFolder}/.devcontainer/.env",
+    "ruff.format.args": ["--line-length=100"],
+    "ruff.lint.args": ["--line-length=100"],
+    "search.exclude": {
+        "**/build": true,
+        "**/install": true,
+        "**/log": true
+    }
+}

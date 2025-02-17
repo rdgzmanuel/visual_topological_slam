@@ -1,6 +1,6 @@
 # deep learning libraries
 import torch
-import os
+import time
 import numpy as np
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader
@@ -9,7 +9,7 @@ from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
 # own modules
-from src.models import CNNExtractor
+from src.models import CNNExtractor, AutoEncoder
 from src.utils import (
     load_cold_data,
     save_model,
@@ -37,10 +37,13 @@ def main() -> None:
     """
 
     # hyperparameters
-    epochs: int = 1
+    epochs: int = 60
     lr: float = 1e-3
-    batch_size: int = 64
+    batch_size: int = 128
     dropout: float = 0.5
+    step_size: int = 15
+    gamma: float = 0.2
+    embedding_size: int = 1024
 
     # empty nohup file
     open("nohup.out", "w").close()
@@ -51,15 +54,17 @@ def main() -> None:
     train_data, val_data, _ = load_cold_data(SEQ_DATA_PATH, DATA_PATH, batch_size=batch_size)
 
     # define name and writer
-    name: str = "model_1"
+    name: str = "model_13"
     writer: SummaryWriter = SummaryWriter(f"runs/{name}")
 
     # define model
-    model: torch.nn.Module = CNNExtractor(output_size=NUMBER_OF_CLASSES, dropout=dropout).to(device)
+    # model: torch.nn.Module = CNNExtractor(output_size=NUMBER_OF_CLASSES, dropout=dropout).to(device)
+    model: torch.nn.Module = AutoEncoder(num_classes=NUMBER_OF_CLASSES, dropout=dropout).to(device)
     
     # define loss and optimizer
     loss: torch.nn.Module = torch.nn.CrossEntropyLoss()
     optimizer: torch.optim.Optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    scheduler: torch.optim.lr_scheduler.StepLR = torch.optim.lr_scheduler.StepLR(optimizer, step_size=step_size, gamma=gamma)
 
     # train loop
     for epoch in tqdm(range(epochs)):
@@ -69,7 +74,7 @@ def main() -> None:
         # call val step
         val_step(model, val_data, loss, writer, epoch, device)
 
-        print(f"Epoch {epoch} finished.")
+        scheduler.step()
 
     # save model
     save_model(model, name)

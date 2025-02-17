@@ -1,0 +1,39 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "ROS: Lab 01",
+            "type": "ros",
+            "request": "launch",
+            "target": "${workspaceFolder}/launch/lab01_launch.py",
+        },
+        {
+            "name": "ROS: Lab 02",
+            "type": "ros",
+            "request": "launch",
+            "target": "${workspaceFolder}/launch/lab02_launch.py",
+        },
+        {
+            "name": "ROS: Lab 03",
+            "type": "ros",
+            "request": "launch",
+            "target": "${workspaceFolder}/launch/lab03_launch.py",
+        },
+        {
+            "name": "ROS: Project",
+            "type": "ros",
+            "request": "launch",
+            "target": "${workspaceFolder}/launch/project_launch.py",
+        },
+        {
+            "name": "Python: Current file",
+            "type": "python",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+        },
+    ],
+}
