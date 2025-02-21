@@ -1,6 +1,6 @@
-import math
+import numpy as np
 
-class Odometry:
+class OdometryClass:
     def __init__(self) -> None:
         """
         Constructor of the Odometry class.
@@ -26,7 +26,7 @@ class Odometry:
         """
         distance: float = self._compute_distance((x, y), (prev_x, prev_y))
         v: float = distance / time_difference
-        w: float = ((theta - prev_theta) % math.pi) / time_difference
+        w: float = ((theta - prev_theta) % (2 * np.pi)) / time_difference
         return v, w
     
     def _compute_distance(x: float, y: float) -> float:
@@ -40,4 +40,4 @@ class Odometry:
         Returns:
             float: distance between x and y.
         """
-        return math.sqrt((x[0] - y[0]) ** 2 + (x[1] - y[1]) ** 2)
+        return np.sqrt((x[0] - y[0]) ** 2 + (x[1] - y[1]) ** 2)

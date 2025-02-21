@@ -1,11 +1,8 @@
-# deep learning libraries
 import torch
-import time
 import numpy as np
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader
 
-# other libraries
 from tqdm.auto import tqdm
 
 # own modules
@@ -17,16 +14,13 @@ from src.utils import (
     Accuracy
 )
 
-# set device
 device: torch.device = (
     torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 )
 
-# set all seeds and set number of threads
 set_seed(42)
 torch.set_num_threads(8)
 
-# static variables
 SEQ_DATA_PATH: str = "seq_data"
 DATA_PATH: str = "data"
 NUMBER_OF_CLASSES: int = 12
@@ -43,17 +37,13 @@ def main() -> None:
     dropout: float = 0.5
     step_size: int = 15
     gamma: float = 0.2
-    embedding_size: int = 1024
 
-    # empty nohup file
     open("nohup.out", "w").close()
 
-    # load data
     train_data: DataLoader
     val_data: DataLoader
     train_data, val_data, _ = load_cold_data(SEQ_DATA_PATH, DATA_PATH, batch_size=batch_size)
 
-    # define name and writer
     name: str = "model_13"
     writer: SummaryWriter = SummaryWriter(f"runs/{name}")
 
@@ -61,22 +51,17 @@ def main() -> None:
     # model: torch.nn.Module = CNNExtractor(output_size=NUMBER_OF_CLASSES, dropout=dropout).to(device)
     model: torch.nn.Module = AutoEncoder(num_classes=NUMBER_OF_CLASSES, dropout=dropout).to(device)
     
-    # define loss and optimizer
     loss: torch.nn.Module = torch.nn.CrossEntropyLoss()
     optimizer: torch.optim.Optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     scheduler: torch.optim.lr_scheduler.StepLR = torch.optim.lr_scheduler.StepLR(optimizer, step_size=step_size, gamma=gamma)
 
-    # train loop
     for epoch in tqdm(range(epochs)):
-        # call train step
         train_step(model, train_data, loss, optimizer, writer, epoch, device)
 
-        # call val step
         val_step(model, val_data, loss, writer, epoch, device)
 
         scheduler.step()
 
-    # save model
     save_model(model, name)
 
     return None
@@ -127,7 +112,6 @@ def train_step(
         losses.append(loss_value.item())
         accuracies.append(accuracy_value)
         
-    # write on tensorboard
     writer.add_scalar("train/loss", np.mean(losses), epoch)
     writer.add_scalar("train/accuracy", np.mean(accuracies), epoch)
 
