@@ -8,12 +8,6 @@ class CNNExtractor(nn.Module):
     """
     CNN feature extractor using a ResNet50 backbone.
     """
-
-    # transformer: nn.Module
-    # avgpool: nn.Module
-    # classifier: nn.Sequential
-    # last_features: torch.Tensor
-
     def __init__(self, output_size: int = 12, dropout: float = 0.5) -> None:
         """
         Constructor for CNNExtractor class.
@@ -26,13 +20,12 @@ class CNNExtractor(nn.Module):
 
         self.transformer: nn.Module = models.resnet101(weights=ResNet101_Weights.DEFAULT)
 
-        # Remove the final classification layer
         self.transformer = nn.Sequential(*list(self.transformer.children())[:-2])
 
-        num_features: int = 2048  # Output from ResNet's avgpool layer
+        # output from resnet's avgpool layer
+        num_features: int = 2048
         self.avgpool: nn.Module = nn.AdaptiveAvgPool2d((1, 1))
 
-        # Define the classifier
         self.intermediate_size: int = num_features // 2
         self.classifier: nn.Sequential = nn.Sequential(
             nn.Dropout(p=dropout),
@@ -41,43 +34,42 @@ class CNNExtractor(nn.Module):
             nn.Linear(self.intermediate_size, output_size),
         )
 
-        # Enable training on the classifier
         for param in self.transformer.parameters():
-            param.requires_grad = False  # Keep backbone frozen
+            param.requires_grad = False
 
         for param in self.classifier.parameters():
-            param.requires_grad = True  # Train classifier
+            param.requires_grad = True
 
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
         """
         Forward pass for feature extraction and classification.
 
         Args:
-            inputs (Tensor): Batch of images [batch, channels, height, width].
+            inputs (Tensor): batch of images [batch, channels, height, width].
 
         Returns:
-            Tensor: Logits of shape [batch, number of classes].
+            Tensor: logits of shape [batch, number of classes].
         """
-        features: torch.Tensor = self.transformer(inputs)  # Output: [batch, 2048, H, W]
-        features = self.avgpool(features)  # Output: [batch, 2048, 1, 1]
-        features = features.view(features.size(0), -1)  # Flatten to [batch, 2048]
+        features: torch.Tensor = self.transformer(inputs)  # [batch, 2048, H, W]
+        features = self.avgpool(features)  # [batch, 2048, 1, 1]
+        features = features.view(features.size(0), -1)  # [batch, 2048]
 
-        self.last_features = self.classifier[1](features)  # Extract last trained features before final layer
+        self.last_features = self.classifier[1](features)
 
-        return self.classifier[3](self.last_features)  # Pass through final classifier layer
+        return self.classifier[3](self.last_features)
 
     def extract_features(self, inputs: torch.Tensor) -> torch.Tensor:
         """
         Extract feature representations before the final classification layer.
 
         Args:
-            inputs (Tensor): Batch of images.
+            inputs (Tensor): batch of images.
 
         Returns:
-            Tensor: Feature tensor of shape [batch, intermediate_size (1024)].
+            Tensor: feature tensor of shape [batch, intermediate_size (1024)].
         """
-        _ = self.forward(inputs)  # Run forward to populate self.last_features
-        return self.last_features  # Return last hidden layer representation
+        _ = self.forward(inputs)
+        return self.last_features
 
 
 class AutoEncoder(nn.Module):
@@ -86,9 +78,15 @@ class AutoEncoder(nn.Module):
     """
 
     def __init__(self, num_classes: int = 12, dropout: float = 0.5) -> None:
+        """
+        Constructor of the AutoEncoder class.
+
+        Args:
+            num_classes (int, optional): number of classes. Defaults to 12.
+            dropout (float, optional): dropout probability. Defaults to 0.5.
+        """
         super(AutoEncoder, self).__init__()
 
-        # Encoder
         self.encoder: nn.Module = models.resnet101(weights=ResNet101_Weights.DEFAULT)
         self.encoder: nn.Sequential = nn.Sequential(*list(self.encoder.children())[:-2])
 
@@ -98,8 +96,8 @@ class AutoEncoder(nn.Module):
         self.intermediate_size: int = num_features // 2
 
         self.dropout: nn.Dropout = nn.Dropout(p=dropout)
-        self.fc_enc: nn.Linear = nn.Linear(num_features, self.intermediate_size)  # Maps large feature map to 1024-d embedding
-        self.fc_dec: nn.Linear = nn.Linear(self.intermediate_size, 512 * 7 * 7)  # Maps back for reconstruction
+        self.fc_enc: nn.Linear = nn.Linear(num_features, self.intermediate_size)
+        self.fc_dec: nn.Linear = nn.Linear(self.intermediate_size, 512 * 7 * 7)
 
         self.decoder: nn.Sequential = nn.Sequential(
             nn.ConvTranspose2d(512, 256, kernel_size=3, stride=2, padding=1, output_padding=1),
@@ -127,11 +125,17 @@ class AutoEncoder(nn.Module):
         )
 
         for param in self.encoder.parameters():
-            param.requires_grad = False  # Keep backbone frozen
+            param.requires_grad = False
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass
+        Performs the forward pass of the model.
+
+        Args:
+            x (torch.Tensor): inputs to the model.
+
+        Returns:
+            torch.Tensor: logits of the classification head.
         """
         encoded: torch.Tensor = self.encoder(x)
         encoded = self.avgpool(encoded)
@@ -148,7 +152,13 @@ class AutoEncoder(nn.Module):
     
     def extract_features(self, x: torch.Tensor) -> torch.Tensor:
         """
-        Feature extraction process
+        Method that performs the feature extraction process.
+
+        Args:
+            x (torch.Tensor): inputs to the model.
+
+        Returns:
+            torch.Tensor: features extracted.
         """
         features: torch.Tensor = self.encoder(x)
         features = self.avgpool(features)
