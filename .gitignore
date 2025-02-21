@@ -5,3 +5,8 @@ project/data/
 # Model folders
 project/runs/
 project/models/
+
+# ROS2
+build/
+install/
+log/

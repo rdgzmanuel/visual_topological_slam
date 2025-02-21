@@ -1,0 +1,47 @@
+// See https://containers.dev/implementors/json_reference/ for format details.
+{
+    "name": "ROS2 Humble",
+    "dockerFile": "Dockerfile",
+    "build": {
+        "args": {
+            "WORKSPACE": "${containerWorkspaceFolder}"
+        }
+    },
+    "remoteUser": "ros",
+    "runArgs": [
+        "--network=host", // Remove network isolation between the container and the Docker host.
+        "--add-host=host.docker.internal:host-gateway", // Allow accessing host IP using host.docker.internal
+        "--hostname=humble" // Set hostname
+    ],
+    "forwardPorts": [
+        3389
+    ], // Forward xrdp port
+    "postStartCommand": "sudo service xrdp start",
+    // Set container specific settings.json values on container create.
+    "customizations": {
+        "vscode": {
+            "settings": {
+                "terminal.integrated.profiles.linux": {
+                    "bash": {
+                        "path": "bash"
+                    }
+                },
+                "terminal.integrated.defaultProfile.linux": "bash"
+            },
+            "extensions": [
+                "ms-python.python",
+                "ms-azuretools.vscode-docker",
+                "ms-vscode.cpptools",
+                "ajshort.msg",
+                "GitHub.copilot",
+                "gruntfuggly.todo-tree",
+                "mutantdino.resourcemonitor",
+                "njpwerner.autodocstring",
+                "smilerobotics.urdf",
+                "twxs.cmake",
+                "charliermarsh.ruff",
+                "ms-iot.vscode-ros"
+            ]
+        }
+    }
+}
