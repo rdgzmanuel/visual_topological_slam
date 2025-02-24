@@ -1,11 +1,10 @@
 import rclpy
-import torch
 import os
 import time
 from rclpy.node import Node
 
-from nav_msgs.msg import Odometry
-from vts_odom.odometry import Odometry
+from vts_msgs.msg import CustomOdometry
+from vts_odom.odometry import OdometryClass
 
 class OdometryNode(Node):
     def __init__(self) -> None:
@@ -13,10 +12,10 @@ class OdometryNode(Node):
         Odometry node initializer.
         """
         super().__init__("odometry")
-        self._publisher = self.create_publisher(Odometry, "/odom", 10)
+        self._publisher = self.create_publisher(CustomOdometry, "/odom", 10)
 
         self._trajectory: str = "cold-freiburg_part_a_seq_1_cloudy1"
-        self.odometry: Odometry = Odometry()
+        self.odometry: OdometryClass = OdometryClass()
 
         self._publish_odometry()
     
@@ -49,9 +48,10 @@ class OdometryNode(Node):
                 v: float
                 w: float
                 v, w = self.odometry._compute_poses(time_difference, x, y, theta, prev_x, prev_y, prev_theta)
-                odometry_msg: Odometry = Odometry()
-                odometry_msg.twist.twist.linear.x = v
-                odometry_msg.twist.twist.angular.z = w
+                odometry_msg: CustomOdometry = CustomOdometry()
+                odometry_msg.odometry.twist.twist.linear.x = v
+                odometry_msg.odometry.twist.twist.angular.z = w
+                odometry_msg.time_diff = time_difference
 
                 self._publisher.publish(odometry_msg)
                 time.sleep(0.1)

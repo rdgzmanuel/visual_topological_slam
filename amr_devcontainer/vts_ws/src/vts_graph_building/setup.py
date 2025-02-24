@@ -1,6 +1,6 @@
 from setuptools import find_packages, setup
 
-package_name = 'vts_odom'
+package_name = 'vts_graph_building'
 
 setup(
     name=package_name,
@@ -15,7 +15,7 @@ setup(
     zip_safe=True,
     maintainer='Manuel Rodriguez',
     maintainer_email='manuel.rodriguezvillegas09@gmail.com',
-    description='Handles odometry measurements',
+    description='Creates graph for topological SLAM',
     license='Apache-2.0',
     tests_require=['pytest'],
     entry_points={
