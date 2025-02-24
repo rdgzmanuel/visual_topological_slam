@@ -413,17 +413,28 @@ def load_tensorboard_scalars(model_dir: str, metric: str) -> tuple[list[int], li
     return steps, values
 
 
-def plot_charts() -> None:
-    log_dir: str = "runs"
-    image_dir: str = "images_good"
-    models: list[str] = ["model_8", "model_12", "model_13"]
-    metrics: list[str] = ["train/loss", "train/accuracy", "val/loss", "val/accuracy"]
+def plot_images() -> None:
+    images_path: str = "comparison"
+    models: list[str] = ["model_8", "model_13", "cnn_avg_1", "ae_avg_4"]
 
     model_names: dict[str, str] = {
         "model_8": "m8_cnn",
-        "model_12": "m12_ae",
-        "model_13": "m13_ae_d"
+        "model_13": "m13_ae_d",
+        "cnn_avg_1": "cnn_avg_1",
+        "ae_avg_4": "ae_avg_4",
     }
+
+    colors: list[str] = ["#007acc", "#ff7700", "#33cc33", "#cc33cc"]
+
+    plot_charts(images_path, models, model_names, colors)
+
+    return None
+    
+
+def plot_charts(images_path: str, models: list[str], model_names: dict[str, str], colors: list[str]) -> None:
+    log_dir: str = "runs"
+    image_dir: str = os.path.join("images", images_path)
+    metrics: list[str] = ["train/loss", "train/accuracy", "val/loss", "val/accuracy"]
 
     os.makedirs(image_dir, exist_ok=True)
 
@@ -432,8 +443,6 @@ def plot_charts() -> None:
 
     for metric in metrics:
         plt.figure(figsize=(8, 6))
-
-        colors = ["#007acc", "#ff7700", "#33cc33"]
 
         for i, model in enumerate(models):
             model_path: str = os.path.join(log_dir, model)
@@ -455,6 +464,7 @@ def plot_charts() -> None:
         plt.savefig(image_path, dpi=300, bbox_inches="tight")
         plt.close()
 
+
 if __name__ == "__main__":
 
     path: str = "seq_data"
@@ -462,4 +472,4 @@ if __name__ == "__main__":
     # download_cold_data(path)
     # prepare_data(path, data_path)
     # load_cold_data(data_path)
-    plot_charts()
+    plot_images()
