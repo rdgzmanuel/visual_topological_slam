@@ -6,7 +6,7 @@ from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
 # own modules
-from src.models import CNNExtractor, AutoEncoder
+from src.models import CNNExtractor, AutoEncoder, CNNAvgPool, AEAvgPool
 from src.utils import (
     load_cold_data,
     save_model,
@@ -31,7 +31,8 @@ def main() -> None:
     """
 
     # hyperparameters
-    epochs: int = 60
+    epochs: int = 25
+    lr_backbone: float = 1e-5
     lr: float = 1e-3
     batch_size: int = 128
     dropout: float = 0.5
@@ -44,15 +45,20 @@ def main() -> None:
     val_data: DataLoader
     train_data, val_data, _ = load_cold_data(SEQ_DATA_PATH, DATA_PATH, batch_size=batch_size)
 
-    name: str = "model_13"
+    name: str = "cnn_avg_2"
     writer: SummaryWriter = SummaryWriter(f"runs/{name}")
 
     # define model
     # model: torch.nn.Module = CNNExtractor(output_size=NUMBER_OF_CLASSES, dropout=dropout).to(device)
-    model: torch.nn.Module = AutoEncoder(num_classes=NUMBER_OF_CLASSES, dropout=dropout).to(device)
+    # model: torch.nn.Module = AutoEncoder(num_classes=NUMBER_OF_CLASSES, dropout=dropout).to(device)
+    model: CNNAvgPool = CNNAvgPool(output_size=NUMBER_OF_CLASSES, dropout=dropout).to(device)
+    # model: AEAvgPool = AEAvgPool(num_classes=NUMBER_OF_CLASSES, dropout=dropout).to(device)
     
     loss: torch.nn.Module = torch.nn.CrossEntropyLoss()
-    optimizer: torch.optim.Optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    optimizer: torch.optim.Optimizer = torch.optim.Adam([
+        {"params": model.backbone[5:].parameters(), "lr": lr_backbone},
+        {"params": model.classifier.parameters(), "lr": lr}])
+    
     scheduler: torch.optim.lr_scheduler.StepLR = torch.optim.lr_scheduler.StepLR(optimizer, step_size=step_size, gamma=gamma)
 
     for epoch in tqdm(range(epochs)):
