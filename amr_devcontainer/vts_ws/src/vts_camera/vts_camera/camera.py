@@ -1,6 +1,6 @@
 import torch
 
-from project.src.models import CNNExtractor, AutoEncoder
+from project.src.models import CNNExtractor, AutoEncoder, CNNAvgPool, AEAvgPool
 from project.src.utils import load_model
 
 class Camera:
