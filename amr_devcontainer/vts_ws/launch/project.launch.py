@@ -1,0 +1,92 @@
+from launch import LaunchDescription
+from launch_ros.actions import Node
+
+
+def generate_launch_description():
+    # Signo -, cambio x, y; -scale y para freiburg
+    model_name: str = "m13_ae_97"
+
+    lab: str = "freiburg_a"
+    start: tuple[float, float, float] = (2.29, -0.29, 0.0)
+    trajectory: str = "cold-freiburg_part_a_seq2_sunny3"
+
+    # lab: str = "saarbruecken_a"
+    # start: tuple[float, float, float] = (0.19, 0.01, 0.04)
+    # trajectory: str = "cold-saarbruecken_part_a_seq2_cloudy1"
+
+    # start: tuple[float, float, float] = (0.27, 0.0, 0.0)
+    # trajectory: str = "cold-saarbruecken_part_b_seq4_sunny1"
+
+    # start: tuple[float, float, float] = (0.29, 0.0, 0.0)
+    # trajectory: str = "cold-freiburg_part_b_seq3_sunny1"
+
+    # lab: str = "ljubljana"
+    # start: tuple[float, float, float] = (1.43, -5.61, 1.89)
+    # trajectory: str = "cold-ljubljana_part_a_seq1_night1"
+
+    settings: dict = {
+        "freiburg_a": {
+            "world_limits": (-17, 19.75, -44, 16.5),
+            "map_name": "freiburg_a.png",
+            "origin": (521, 419),
+            "weights": (0.0002033, 0.005795, 0.04014, -0.08563, 1.196, -1.287,
+                        0.001895, 0.01463, -0.03163, -0.2269, 2.095, 0.4223)
+        },
+        "saarbruecken_a": {
+            "world_limits": (-16.75, 19.85, -37.5, 23.5),
+            "map_name": "saarbruecken_a.png",
+            "origin": (453, 580),
+            "weights": (-0.0006797, 0.006361, 0.02416, -0.2676, 1.739, 0.6249,
+                        1.996e-05, 0.0001553, -0.005155, -0.05405, 1.929, 0.4386)
+        },
+        "ljubljana": {
+            "world_limits": (-6.15, 12.5, -7, 80),
+            "map_name": "ljubljana.png",
+            "origin": (270, 1574),
+            "weights": (-0.0005541, -0.0008833, 0.03766, 0.08971, 2.01, 0.8016,
+                        0.002923, -0.0005398, -0.1098, -0.1252, 3.23, 0.5326)
+        },
+        "saarbruecken_ext": {
+            "world_limits": (-11.7, 19, -24, 27.5),
+            "map_name": "saarbruecken_ext.png",
+            "origin": (430, 886),
+            "weights": (-0.0005541, -0.0008833, 0.03766, 0.08971, 2.01, 0.8016,
+                        0.002923, -0.0005398, -0.1098, -0.1252, 3.23, 0.5326)
+        },
+        "freiburg_ext": {
+            "world_limits": (-15.8, 18.8, -14, 37),
+            "map_name": "freiburg_ext.png",
+            "origin": (598, 1203),
+            "weights": (-0.0002973, 0.01101, -0.1336, 0.4863, 2.702, 0.2607,
+                        0.00247, -0.001639, -0.1432, 0.0684, 3.786, -0.4859)
+        },
+    }
+
+    return LaunchDescription(
+        [
+            Node(
+                package="vts_graph_building",
+                executable="graph_builder",
+                output="screen",
+                arguments=["--ros-args", "--log-level", "WARN"],
+                parameters=[{"start": start, "world_limits": settings[lab]["world_limits"],
+                             "map_name": settings[lab]["map_name"], "origin": settings[lab]["origin"],
+                             "weights": settings[lab]["weights"], "trajectory": trajectory,
+                             "model_name": model_name}],
+            ),
+            Node(
+                package="vts_camera",
+                executable="camera",
+                output="screen",
+                arguments=["--ros-args", "--log-level", "WARN"],
+                parameters=[{"trajectory": trajectory, "model_name": model_name}],
+            ),
+            # Node(
+            #     package="vts_odom",
+            #     executable="odometry",
+            #     output="screen",
+            #     arguments=["--ros-args", "--log-level", "WARN"],
+            #     parameters=[{"trajectory": trajectory}],
+            # )
+        ]
+    )

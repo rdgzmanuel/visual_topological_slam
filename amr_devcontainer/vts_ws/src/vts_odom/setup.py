@@ -20,6 +20,7 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
+            "odometry = vts_odom.odometry_node:main"
         ],
     },
 )

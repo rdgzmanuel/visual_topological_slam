@@ -17,9 +17,13 @@ class CameraNode(Node):
         super().__init__("camera")
         self._publisher = self.create_publisher(ImageTensor, "/camera", 10)
 
-        self._trajectory: str = "cold-freiburg_part_a_seq_1_cloudy1"
-        model_name: str = "m13_97.pth"
-        self.camera: Camera = Camera(model_name)
+        self.declare_parameter("trajectory", "default_value")
+        self._trajectory: str = self.get_parameter("trajectory").get_parameter_value().string_value
+        
+        self.declare_parameter("model_name", "default_value")
+        self._model_name: str = self.get_parameter("model_name").get_parameter_value().string_value
+        
+        self.camera: Camera = Camera(self._model_name)
         self._transform = transforms.Compose([
             transforms.Resize((224, 224)),
             transforms.ToTensor(),
@@ -32,26 +36,26 @@ class CameraNode(Node):
         """
         Function that publishes features extracted from images.
         """
-        seq_data_folder: str = "/project/seq_data"
+        seq_data_folder: str = "/workspace/project/seq_data"
         images_folder: str = "std_cam"
         trajectory_folder: str = os.path.join(seq_data_folder, self._trajectory)
         images_path: str = os.path.join(trajectory_folder, images_folder)
 
-        for image in os.listdir(images_path):
+        for image in sorted(os.listdir(images_path)):
             tensor_msg: ImageTensor = ImageTensor()
-            open_image = Image.open(image).convert("RGB")
+            open_image = Image.open(os.path.join(images_path, image)).convert("RGB")
             tensor_image: torch.Tensor = self._transform(open_image)
 
             features: torch.tensor = self.camera.extract_features(tensor_image)
             tensor_msg.shape = list(features.shape)
-            
-            if features.is_cuda():
+            tensor_msg.image_name = str(image)
+
+            if features.is_cuda:
                 tensor_msg.data = features.view(-1).cpu().tolist()
             else:
                 tensor_msg.data = features.view(-1).tolist()
             
             self._publisher.publish(tensor_msg)
-            time.sleep(0.1)
 
 
 def main(args=None):

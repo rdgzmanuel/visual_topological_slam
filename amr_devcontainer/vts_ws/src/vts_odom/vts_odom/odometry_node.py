@@ -1,6 +1,5 @@
 import rclpy
 import os
-import time
 from rclpy.node import Node
 
 from vts_msgs.msg import CustomOdometry
@@ -14,56 +13,82 @@ class OdometryNode(Node):
         super().__init__("odometry")
         self._publisher = self.create_publisher(CustomOdometry, "/odom", 10)
 
-        self._trajectory: str = "cold-freiburg_part_a_seq_1_cloudy1"
+        self.declare_parameter("trajectory", "default_value")
+        self._trajectory: str = self.get_parameter("trajectory").get_parameter_value().string_value
         self.odometry: OdometryClass = OdometryClass()
 
         self._publish_odometry()
     
     def _publish_odometry(self) -> None:
         """
-        Function that publishes features extracted from images.
+        Reads the odometry file and starts a ROS2 timer to publish odometry messages.
         """
-        seq_data_folder: str = "/project/seq_data"
+        seq_data_folder: str = "/workspace/project/seq_data"
         odometry_folder: str = "odom_scans"
         odometry_file: str = "odom.tdf"
         trajectory_folder: str = os.path.join(seq_data_folder, self._trajectory)
-        odometry_path: str = os.path.join(os.path.join(trajectory_folder, odometry_folder), odometry_file)
+        odometry_path: str = os.path.join(trajectory_folder, odometry_folder, odometry_file)
 
-        with open(odometry_path, "r") as file:
-            for i, line in enumerate(file):
-                line_content: list[int | float] = line.split()
-                if i == 0:
-                    prev_timestamp: float = float(line_content[3] + "." + line_content[4])
-                    prev_x: float = line_content[7]
-                    prev_y: float = line_content[8]
-                    prev_theta: float = line_content[10]
-                    continue
-                
-                timestamp: float = float(line_content[3] + "." + line_content[4])
-                x: float = line_content[7]
-                y: float = line_content[8]
-                theta: float = line_content[10]
+        try:
+            with open(odometry_path, "r") as file:
+                lines: list[str] = file.readlines()
+        except FileNotFoundError:
+            self.get_logger().error(f"Odometry file not found: {odometry_path}")
+            return
 
-                time_difference: float = timestamp - prev_timestamp
-                v: float
-                w: float
-                v, w = self.odometry._compute_poses(time_difference, x, y, theta, prev_x, prev_y, prev_theta)
-                odometry_msg: CustomOdometry = CustomOdometry()
-                odometry_msg.odometry.twist.twist.linear.x = v
-                odometry_msg.odometry.twist.twist.angular.z = w
-                odometry_msg.time_diff = time_difference
+        if not lines:
+            self.get_logger().error("Odometry file is empty.")
+            return
 
-                self._publisher.publish(odometry_msg)
-                time.sleep(0.1)
+        self.odom_data: list[list[float]] = [list(map(float, line.split())) for line in lines]
+        self.odom_index: int = 0
+        self.timer = self.create_timer(0.1, self._timer_callback)
 
-                prev_timestamp = timestamp
-                prev_x = x
-                prev_y = y
-                prev_theta = theta
-        
+    def _timer_callback(self) -> None:
+        """
+        Timer callback function that publishes odometry messages at regular intervals.
+        """
+        if self.odom_index >= len(self.odom_data):
+            self.get_logger().info("Finished publishing odometry data.")
+            self.timer.cancel()
+            return
+
+        line_content: list[float] = self.odom_data[self.odom_index]
+
+        if self.odom_index == 0:
+            self.prev_timestamp: float = float(f"{int(line_content[3])}.{int(line_content[4])}")
+            self.prev_x: float = float(line_content[7])
+            self.prev_y: float = float(line_content[8])
+            self.prev_theta: float = float(line_content[11])
+            self.odom_index += 1
+            return
+
+        timestamp: float = float(f"{int(line_content[3])}.{int(line_content[4])}")
+        x: float = float(line_content[7])
+        y: float = float(line_content[8])
+        theta: float = float(line_content[11])
+
+        time_difference: float = timestamp - self.prev_timestamp
+        v, w = self.odometry._compute_poses(time_difference, x, y, theta, self.prev_x, self.prev_y, self.prev_theta)
+
+        odometry_msg: CustomOdometry = CustomOdometry()
+        odometry_msg.odometry.twist.twist.linear.x = v
+        odometry_msg.odometry.twist.twist.angular.z = w
+        odometry_msg.time_diff = time_difference
+
+        # self._publisher.publish(odometry_msg)
+
+        self.prev_timestamp = timestamp
+        self.prev_x = x
+        self.prev_y = y
+        self.prev_theta = theta
+        self.odom_index += 1
 
 
-def main(args=None):
+def main(args=None) -> None:
+    """
+    Main function to initialize and spin the ROS2 node.
+    """
     rclpy.init(args=args)
     odometry_node: OdometryNode = OdometryNode()
 

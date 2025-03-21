@@ -1,2 +1,2 @@
-nav_msgs/Odometry Odometry
-float time_diff
+nav_msgs/Odometry odometry
+float32 time_diff

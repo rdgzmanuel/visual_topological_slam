@@ -356,8 +356,12 @@ def load_model(name: str) -> RecursiveScriptModule:
     Returns:
         RecursiveScriptModule: model in torchscript.
     """
+    model_path: str = f"/workspace/project/models/{name}.pt"
 
-    model: RecursiveScriptModule = torch.jit.load(f"models/{name}.pt")
+    if not os.path.exists(model_path):
+        model_path = f"models/{name}.pt"
+
+    model: RecursiveScriptModule = torch.jit.load(model_path)
 
     return model
 

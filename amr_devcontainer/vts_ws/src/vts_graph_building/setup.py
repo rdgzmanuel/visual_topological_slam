@@ -20,6 +20,7 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
+            "graph_builder = vts_graph_building.graph_builder_node:main"
         ],
     },
 )
