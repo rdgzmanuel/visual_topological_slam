@@ -10,3 +10,5 @@ project/models/
 build/
 install/
 log/
+
+graphs/

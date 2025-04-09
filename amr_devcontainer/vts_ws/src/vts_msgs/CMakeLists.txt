@@ -18,6 +18,8 @@ find_package(nav_msgs REQUIRED)
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/CustomOdometry.msg"
   "msg/ImageTensor.msg"
+  "msg/GraphNode.msg"
+  "msg/FullGraph.msg"
   DEPENDENCIES builtin_interfaces geometry_msgs std_msgs sensor_msgs nav_msgs
 )
 

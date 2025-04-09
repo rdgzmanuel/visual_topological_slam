@@ -3,12 +3,15 @@ from launch_ros.actions import Node
 
 
 def generate_launch_description():
-    # Signo -, cambio x, y; -scale y para freiburg
     model_name: str = "m13_ae_97"
 
     lab: str = "freiburg_a"
-    start: tuple[float, float, float] = (2.29, -0.29, 0.0)
-    trajectory: str = "cold-freiburg_part_a_seq2_sunny3"
+
+    start_1: tuple[float, float, float] = (0.2, 0.0, 0.0)
+    trajectory_1: str = "cold-freiburg_part_a_seq2_night1"
+
+    start_2: tuple[float, float, float] = (2.29, -0.29, 0.0)
+    trajectory_2: str = "cold-freiburg_part_a_seq2_sunny3"
 
     # lab: str = "saarbruecken_a"
     # start: tuple[float, float, float] = (0.19, 0.01, 0.04)
@@ -62,6 +65,7 @@ def generate_launch_description():
         },
     }
 
+
     return LaunchDescription(
         [
             Node(
@@ -69,24 +73,90 @@ def generate_launch_description():
                 executable="graph_builder",
                 output="screen",
                 arguments=["--ros-args", "--log-level", "WARN"],
-                parameters=[{"start": start, "world_limits": settings[lab]["world_limits"],
+                parameters=[{"start_1": start_1, "start_2": start_2, "world_limits": settings[lab]["world_limits"],
                              "map_name": settings[lab]["map_name"], "origin": settings[lab]["origin"],
-                             "weights": settings[lab]["weights"], "trajectory": trajectory,
-                             "model_name": model_name}],
-            ),
-            Node(
-                package="vts_camera",
-                executable="camera",
-                output="screen",
-                arguments=["--ros-args", "--log-level", "WARN"],
-                parameters=[{"trajectory": trajectory, "model_name": model_name}],
+                             "weights": settings[lab]["weights"], "trajectory_1": trajectory_1,
+                             "trajectory_2": trajectory_2, "model_name": model_name, "publishing_topic": "graph_building_1"}],
+                respawn=False
             ),
             # Node(
-            #     package="vts_odom",
-            #     executable="odometry",
+            #     package="vts_camera",
+            #     executable="camera",
             #     output="screen",
             #     arguments=["--ros-args", "--log-level", "WARN"],
-            #     parameters=[{"trajectory": trajectory}],
-            # )
+            #     parameters=[{"trajectory_1": trajectory_1, "trajectory_2": trajectory_2, "model_name": model_name}],
+            # ),
+            Node(
+                package="vts_map_alignment",
+                executable="graph_alignment",
+                output="screen",
+                arguments=["--ros-args", "--log-level", "WARN"],
+                parameters=[{"trajectory": f"{trajectory_1}__{trajectory_2}", "model_name": model_name,
+                             "world_limits": settings[lab]["world_limits"], "origin": settings[lab]["origin"],
+                             "map_name": settings[lab]["map_name"]}],
+                respawn=False
+            ),
         ]
     )
+
+
+
+
+    # return LaunchDescription(
+    #     [
+    #         Node(
+    #             package="vts_graph_building",
+    #             executable="graph_builder",
+    #             name="graph_builder_1",
+    #             namespace="pass1",
+    #             output="screen",
+    #             arguments=["--ros-args", "--log-level", "WARN"],
+    #             parameters=[{"start": start_1, "world_limits": settings[lab]["world_limits"],
+    #                          "map_name": settings[lab]["map_name"], "origin": settings[lab]["origin"],
+    #                          "weights": settings[lab]["weights"], "trajectory": trajectory_1,
+    #                          "model_name": model_name, "publishing_topic": "graph_building_1"}],
+    #             remappings=[("/camera", "/camera_1")] 
+    #         ),
+    #         Node(
+    #             package="vts_graph_building",
+    #             executable="graph_builder",
+    #             name="graph_builder_2",
+    #             namespace="pass2",
+    #             output="screen",
+    #             arguments=["--ros-args", "--log-level", "WARN"],
+    #             parameters=[{"start": start_2, "world_limits": settings[lab]["world_limits"],
+    #                          "map_name": settings[lab]["map_name"], "origin": settings[lab]["origin"],
+    #                          "weights": settings[lab]["weights"], "trajectory": trajectory_2,
+    #                          "model_name": model_name, "publishing_topic": "graph_building_2"}],
+    #             remappings=[("/camera", "/camera_2")] 
+    #         ),
+    #         Node(
+    #             package="vts_camera",
+    #             executable="camera",
+    #             name="camera_1",
+    #             namespace="pass1",
+    #             output="screen",
+    #             arguments=["--ros-args", "--log-level", "WARN"],
+    #             parameters=[{"trajectory": trajectory_1, "model_name": model_name}],
+    #             remappings=[("/camera", "/camera_1")] 
+    #         ),
+    #         Node(
+    #             package="vts_camera",
+    #             executable="camera",
+    #             name="camera_2",
+    #             namespace="pass2",
+    #             output="screen",
+    #             arguments=["--ros-args", "--log-level", "WARN"],
+    #             parameters=[{"trajectory": trajectory_2, "model_name": model_name}],
+    #             remappings=[("/camera", "/camera_2")] 
+    #         ),
+    #         Node(
+    #             package="vts_map_alignment",
+    #             executable="graph_alignment",
+    #             output="screen",
+    #             arguments=["--ros-args", "--log-level", "WARN"],
+    #             parameters=[{"trajectory": f"{trajectory_1}__{trajectory_2}", "model_name": model_name,
+    #                          "world_limits": settings[lab]["world_limits"], "origin": settings[lab]["origin"]}]
+    #         ),
+    #     ]
+    # )
