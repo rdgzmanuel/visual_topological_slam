@@ -1,6 +1,8 @@
 import rclpy
 import torch
 import os
+import sys
+import time
 from rclpy.node import Node
 from torchvision import transforms
 from PIL import Image
@@ -83,8 +85,8 @@ class CameraNode(Node):
         # If it's the final trajectory, shut down
         if is_final:
             self.get_logger().warn("Second trajectory finished. Shutting down node.")
-            self.destroy_node()
-            rclpy.shutdown()
+            time.sleep(3)
+            sys.exit(0)
 
 def main(args=None):
     rclpy.init(args=args)

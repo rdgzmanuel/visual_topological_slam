@@ -7,7 +7,7 @@ import torch
 from scipy.spatial import KDTree
 from scipy.spatial.distance import cosine
 
-from vts_graph_building.node import GraphNode
+from vts_graph_building.node import GraphNodeClass
 from vts_map_alignment.graph_class import Graph
 from vts_graph_building.graph_builder import stitch_images, crop_black_borders, concat_images,\
     process_stitched_image, world_to_pixel
@@ -21,8 +21,6 @@ class MapAligner:
         """
         
         """
-
-        self.updated_graph: Graph = Graph()
         self._trajectory: str = trajectory
         self._world_limits: tuple[float, float, float, float] = world_limits
         self._origin: tuple[int, int] = origin
@@ -50,31 +48,32 @@ class MapAligner:
         Returns:
             Graph: _description_
         """
-        for node in graph_1.nodes.values():
-            matches: list[GraphNode] = self._update_graph(node, graph_2)
+        self.updated_graph: Graph = copy.deepcopy(graph_2)
+        # for node in graph_1.nodes.values():
+        #     matches: list[GraphNodeClass] = self._update_graph(node, graph_2)
 
-        for node in graph_2.nodes.values():
-            if node not in matches:
-                _ = self._update_graph(node, graph_1, update_matches=False)
+        # for node in graph_2.nodes.values():
+        #     if node not in matches:
+        #         _ = self._update_graph(node, graph_1, update_matches=False)
         
         return None
 
 
-    def _update_graph(self, node: GraphNode, lookup_graph: Graph,
-                       update_matches: bool = True) -> list[GraphNode]:
+    def _update_graph(self, node: GraphNodeClass, lookup_graph: Graph,
+                       update_matches: bool = True) -> list[GraphNodeClass]:
         """
         
 
         Args:
-            node (GraphNode): _description_
+            node (GraphNodeClass): _description_
             updated_graph (Graph): _description_
             lookup_graph (Graph): _description_
             update_matches (bool, optional): _description_. Defaults to True.
-            matches (list[GraphNode], optional): _description_. Defaults to [].
+            matches (list[GraphNodeClass], optional): _description_. Defaults to [].
         """
-        matches: list[GraphNode] = []
+        matches: list[GraphNodeClass] = []
 
-        best_match: GraphNode = self._search_best_match(node, lookup_graph)
+        best_match: GraphNodeClass = self._search_best_match(node, lookup_graph)
         new_id: int = self.updated_graph.node_id
         self.updated_graph.node_id += 1
 
@@ -85,7 +84,7 @@ class MapAligner:
         else:
             new_node = copy.deepcopy(node)
             new_node.id = new_id
-        
+
         if self.updated_graph.current_node is not None:
             self.updated_graph.edges.append((self.updated_graph.current_node.id, new_node.id))
         
@@ -95,20 +94,20 @@ class MapAligner:
         return matches
     
 
-    def _search_best_match(self, node: GraphNode, lookup_graph: Graph, k: int = 3) -> GraphNode:
+    def _search_best_match(self, node: GraphNodeClass, lookup_graph: Graph, k: int = 3) -> GraphNodeClass:
         """
         Find the best matching node to the given node in the lookup graph using a KD-tree and cosine similarity.
 
         Args:
-            node (GraphNode): The query node.
+            node (GraphNodeClass): The query node.
             lookup_graph (Graph): The graph containing nodes to search.
             k (int): The number of nearest neighbors to find.
 
         Returns:
-            GraphNode: The best matching node.
+            GraphNodeClass: The best matching node.
         """
         node_positions: np.ndarray = np.array([n.pose[:2] for n in lookup_graph.nodes.values()])
-        node_list: list[GraphNode] = list(lookup_graph.nodes.values())
+        node_list: list[GraphNodeClass] = list(lookup_graph.nodes.values())
 
         kd_tree: KDTree = KDTree(node_positions)
 
@@ -116,9 +115,9 @@ class MapAligner:
         indices: np.ndarray
         distances, indices = kd_tree.query(node.pose[:2], k=min(k, len(node_list)))
         
-        candidates: list[GraphNode] = [node_list[i] for i in np.atleast_1d(indices)]
+        candidates: list[GraphNodeClass] = [node_list[i] for i in np.atleast_1d(indices)]
         
-        best_node: GraphNode | None = None
+        best_node: GraphNodeClass | None = None
         best_score: float = self._threshold
 
         for i, candidate in enumerate(candidates):
@@ -134,16 +133,16 @@ class MapAligner:
         return best_node
 
 
-    def _fusion_nodes(self, node_1: GraphNode, node_2: GraphNode, new_id: int) -> GraphNode:
+    def _fusion_nodes(self, node_1: GraphNodeClass, node_2: GraphNodeClass, new_id: int) -> GraphNodeClass:
         """
         
 
         Args:
-            node_1 (GraphNode): _description_
-            node_2 (GraphNode): _description_
+            node_1 (GraphNodeClass): _description_
+            node_2 (GraphNodeClass): _description_
 
         Returns:
-            GraphNode: _description_
+            GraphNodeClass: _description_
         """
 
         new_pose: tuple[float, float, float] = self._average_pose(node_1.pose, node_2.pose)
@@ -152,7 +151,7 @@ class MapAligner:
         tensor_image: torch.Tensor = process_stitched_image(new_image)
         new_visual_features: np.ndarray = self._extract_features(tensor_image)
 
-        new_node: GraphNode = GraphNode(id=new_id, pose=new_pose, visual_features=new_visual_features,
+        new_node: GraphNodeClass = GraphNodeClass(id=new_id, pose=new_pose, visual_features=new_visual_features,
                                         image=new_image)
 
         return new_node
@@ -196,8 +195,8 @@ class MapAligner:
 
         # Draw edges
         for idx_1, idx_2 in self.updated_graph.edges:
-            node_1: GraphNode = self.updated_graph.nodes.get(idx_1)
-            node_2: GraphNode = self.updated_graph.nodes.get(idx_2)
+            node_1: GraphNodeClass = self.updated_graph.nodes.get(idx_1)
+            node_2: GraphNodeClass = self.updated_graph.nodes.get(idx_2)
             if node_1 is not None and node_2 is not None:
                 y1, x1, _ = node_1.pose
                 y2, x2, _ = node_2.pose

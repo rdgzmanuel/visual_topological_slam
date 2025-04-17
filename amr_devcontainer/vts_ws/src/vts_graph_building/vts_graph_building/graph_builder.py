@@ -5,7 +5,7 @@ import rclpy.logging
 import torch
 from torchvision import transforms
 from PIL import Image
-from vts_graph_building.node import GraphNode
+from vts_graph_building.node import GraphNodeClass
 from vts_camera.camera import Camera
 
 
@@ -24,10 +24,10 @@ class GraphBuilder:
         """
         self._initial_pose: tuple[float, float, float] = initial_pose
         self.current_pose: tuple[float, float, float] = (0.0, 0.0, 0.0)
-        self.current_node: GraphNode | None = None
+        self.current_node: GraphNodeClass | None = None
         self._current_image: np.ndarray | None = None
         self.steps: int = 0
-        self.graph: list[tuple[GraphNode, GraphNode]] = []
+        self.graph: list[tuple[GraphNodeClass, GraphNodeClass]] = []
         self.window_full: bool = False
 
         self._images_pose: list[tuple[np.ndarray, tuple[float, float, float], np.ndarray]] = []
@@ -67,6 +67,9 @@ class GraphBuilder:
         self._camera: Camera = Camera(model_name)
         self._image_shape: tuple[int, int, int] | None = None
 
+        # rewiring
+        self._rewiring_threshold: float = 3.0
+
         self._logger = rclpy.logging.get_logger('GraphBuilder')
 
 
@@ -94,7 +97,7 @@ class GraphBuilder:
         self.current_pose = (x, y, theta)
         self.steps += 1
 
-        self._plot_node_on_map(self.current_pose, node=False)
+        # self._plot_node_on_map(self.current_pose, node=False)
 
         return None
 
@@ -121,8 +124,8 @@ class GraphBuilder:
 
         self.current_pose = (x, y, theta)
         # self._logger.warn("pre plot")
-        self._plot_node_on_map(self.current_pose, node=False)
-
+        # self._plot_node_on_map(self.current_pose, node=False)
+        # self._logger.warn("post plot")
         self.steps += 1
 
 
@@ -139,7 +142,7 @@ class GraphBuilder:
         image_path: str = os.path.join(self._images_path, image_name)
         image: np.ndarray = cv2.imread(image_path, cv2.IMREAD_COLOR)
 
-        if self._current_image is None:
+        if self._current_image is None and image is not None:
             # self._logger.warn(f"path {image_path}")
             self._image_shape = image.shape
         # self._logger.warn("pre resize")
@@ -188,7 +191,7 @@ class GraphBuilder:
 
             self.current_pose = (x, y, theta)
 
-        self._plot_node_on_map(self.current_pose, node=False)
+        # self._plot_node_on_map(self.current_pose, node=False)
 
         self._prev_timestamp = timestamp
         self.steps += 1
@@ -390,55 +393,38 @@ class GraphBuilder:
         representative: tuple[np.ndarray, tuple[float, float, float], np.ndarray] = self._images_pose[idx]
         self._max_similarity = float("-inf")
 
-        new_node: GraphNode = GraphNode(id=self._node_id, pose=representative[1],
+        new_node: GraphNodeClass = GraphNodeClass(id=self._node_id, pose=representative[1],
                                             visual_features=representative[0], image=representative[2])
-        
-        # self._logger.warn("post new node")
 
         if self.current_node is None:
             self._node_id += 1
             self.current_node = new_node
-            self._plot_node_on_map(self.current_node.pose)
+            # self._plot_node_on_map(self.current_node.pose)
 
         else:
-            # self._logger.warn("pre neighbor")
-            closest_neighbor: GraphNode = self._search_closest_neighbor((new_node.pose[0], new_node.pose[1]))
-            # self._logger.warn("pre distance")
+            closest_neighbor: GraphNodeClass = self._search_closest_neighbor((new_node.pose[0], new_node.pose[1]))
             distance: float = self._compute_distance(closest_neighbor.pose[0], closest_neighbor.pose[1],
                                                      new_node.pose[0], new_node.pose[1])
-            # self._logger.warn("pre if")
-            if distance < self._distance_threshold:
-                # self._logger.warn("pre pose")
-                new_pose: tuple[float, float, float] = self._average_pose(new_node.pose,
-                                                                          closest_neighbor.pose)
-                # self._logger.warn("pre image")
-                # self._logger.warn(f"new_node.image {new_node.image.shape}")
-                # self._logger.warn(f"closest_neighbor.image {closest_neighbor.image.shape}")
-                new_image: np.ndarray = self.stitch_images(new_node.image, closest_neighbor.image,
-                                                      min_matches=self._min_matches)
-                new_image = cv2.resize(new_image, (self._image_shape[1], self._image_shape[0]))
-                # self._logger.warn("pre tensor")
-                tensor_image: torch.Tensor = process_stitched_image(new_image)
-                # self._logger.warn("pre features")
-                new_visual_features: np.ndarray = self._extract_features(tensor_image)
 
-                closest_neighbor.pose = new_pose
-                closest_neighbor.image = new_image
-                closest_neighbor.visual_features = new_visual_features
-                self._plot_node_on_map(closest_neighbor.pose)
-                # self._logger.warn("post plot")
+            if distance < self._distance_threshold:
+                # Revisit confirmed
+                closest_neighbor = self._fusion_nodes(new_node, closest_neighbor)
+                self._rewire_graph(closest_neighbor)
+                self.current_node = closest_neighbor
+
             else:
-                # self._logger.warn("else")
                 self._node_id += 1
                 self.graph.append((self.current_node, new_node))
+                new_node.neighbors.add(self.current_node)
+                self.current_node.neighbors.add(new_node)
                 self.current_node = new_node
-                self._plot_node_on_map(self.current_node.pose)
-                # self._logger.warn("post plot")
+                # self._plot_node_on_map(self.current_node.pose)
+                # self._logger.warn("finish update")
 
         return None
     
 
-    def _search_closest_neighbor(self, pose: tuple[float, float]) -> GraphNode:
+    def _search_closest_neighbor(self, pose: tuple[float, float]) -> GraphNodeClass:
         """
         
 
@@ -446,9 +432,9 @@ class GraphBuilder:
             pose (tuple[float, float]): _description_
 
         Returns:
-            GraphNode: _description_
+            GraphNodeClass: _description_
         """
-        closest_neighbor: GraphNode = self.current_node
+        closest_neighbor: GraphNodeClass = self.current_node
         min_distance: float = self._compute_distance(pose[0], pose[1],
                                                      closest_neighbor.pose[0], closest_neighbor.pose[1])
 
@@ -458,6 +444,39 @@ class GraphBuilder:
                 min_distance = distance
                 closest_neighbor = node
         
+        return closest_neighbor
+    
+
+    def _fusion_nodes(self, new_node: GraphNodeClass, closest_neighbor: GraphNodeClass) -> GraphNodeClass:
+        """
+        Fusions new node with its closests neighbor, stitching their images and feeding the
+        result to the model to obtain new features.
+
+        Args:
+            new_node (GraphNodeClass): _description_
+            closets_neighbor (GraphNodeClass): _description_
+        """
+        new_pose: tuple[float, float, float] = self._average_pose(new_node.pose,
+                                                                          closest_neighbor.pose)
+
+        new_image: np.ndarray = self.stitch_images(new_node.image, closest_neighbor.image,
+                                            min_matches=self._min_matches)
+        new_image = cv2.resize(new_image, (self._image_shape[1], self._image_shape[0]))
+        tensor_image: torch.Tensor = process_stitched_image(new_image)
+        new_visual_features: np.ndarray = self._extract_features(tensor_image)
+
+        closest_neighbor.pose = new_pose
+        closest_neighbor.image = new_image
+        closest_neighbor.visual_features = new_visual_features
+        # self._plot_node_on_map(closest_neighbor.pose)
+
+        if self.current_node != closest_neighbor:
+            closest_neighbor.neighbors.add(self.current_node)
+            self.current_node.neighbors.add(closest_neighbor)
+            new_edge: tuple[GraphNodeClass, GraphNodeClass] = (self.current_node, closest_neighbor)
+            if new_edge not in self.graph: # and (new_edge[1], new_edge[0]) not in self.graph:
+                self.graph.append(new_edge)
+
         return closest_neighbor
     
 
@@ -494,6 +513,133 @@ class GraphBuilder:
             features: list = features.view(-1).tolist()
 
         return np.array(features).astype("float32")
+    
+
+    def _obtain_loop_nodes(self, closest_neighbor: GraphNodeClass) -> list[GraphNodeClass]:
+        """
+        Returns all nodes between current node and closest neighbor (nodes in the loop).
+
+        Args:
+            closest_neighbor (GraphNodeClass): _description_
+
+        Returns:
+            list[GraphNodeClass]: _description_
+        """
+        loop_nodes: list[GraphNodeClass] = []
+        # node: GraphNodeClass = self.graph[-1][0]
+        node: GraphNodeClass = self.current_node
+
+        if node != closest_neighbor:
+            self._logger.warn(f"Neighbor {closest_neighbor.id}, {closest_neighbor.pose[:2]}")
+            self._logger.warn(f"Node {node.id}, {node.pose[:2]}")
+            for node, adj in self.graph:
+                self._logger.warn(f"node {node.id}, adj {adj.id}")
+            i: int = 2
+            while node != closest_neighbor:
+                loop_nodes.append(node)
+                node = self.graph[-i][0]
+                i += 1
+                self._logger.warn(f"Node {node.id}")
+            
+            loop_nodes.append(closest_neighbor)
+
+        return loop_nodes
+
+
+    def _rewire_graph(self, closest_neighbor: GraphNodeClass) -> None:
+        """
+        
+        """
+        loop_nodes: list[GraphNodeClass] = self._obtain_loop_nodes(closest_neighbor)
+        relevant_edges: list[tuple[GraphNodeClass, GraphNodeClass]] = [edge for edge in self.graph
+                                                                       if edge[0] in loop_nodes and edge[1] in loop_nodes]
+        self._logger.warn(f"relevant edges {[node.id for node, _ in relevant_edges]}")
+        for node in loop_nodes:
+            x, y, _ = node.pose
+            projections: dict[tuple[GraphNodeClass, GraphNodeClass], tuple[float, float]] = self._get_projections(node, relevant_edges)
+            self._logger.warn(f"Projection {projections}")
+            for edge, projection in projections.items():
+                self._logger.warn(f"Projection {projection}")
+                if projection is not None:
+                    distance: float = self._compute_distance(x, y, projection[0], projection[1])
+                    self._logger.warn(f"Distance {distance}")
+
+                    if distance < self._rewiring_threshold:
+                        self._logger.warn("Rewiring")
+                        # rewired edge found
+                        self.graph.append((edge[0], node))
+                        self.graph.append((node, edge[1]))
+                        self.graph.remove(edge)
+
+
+    def _get_projections(self, node: GraphNodeClass,
+                         relevant_edges: list[tuple[GraphNodeClass, GraphNodeClass]]) -> dict[tuple[GraphNodeClass, GraphNodeClass],
+                                                                                              tuple[float, float]]:
+        """
+        
+
+        Args:
+            node (GraphNodeClass): _description_
+            relevant_edges (list[tuple[GraphNodeClass, GraphNodeClass]]): _description_
+
+        Returns:
+            dict[tuple[GraphNodeClass, GraphNodeClass], tuple[float, float]]: _description_
+        """
+        projections: dict[tuple[GraphNodeClass, GraphNodeClass], tuple[float, float]] = {}
+
+        for edge in relevant_edges:
+            if node not in edge:
+                self._logger.warn(f"Node {node.id} not in edge {edge[0].id}, {edge[1].id}")
+                projection: tuple[float, float] = self._project_node(node, edge)
+                self._logger.warn(f"Node {node.id} projection: {projection}")
+                edge_distance: float = self._compute_distance(edge[0].pose[0], edge[0].pose[1], edge[1].pose[0], edge[1].pose[1])
+
+                x: float
+                y: float
+                x, y = projection
+                first_distance: float = self._compute_distance(edge[0].pose[0], edge[0].pose[1], x, y)
+                second_distance: float = self._compute_distance(edge[1].pose[0], edge[1].pose[1], x, y)
+
+                self._logger.warn(f"First {first_distance}, second: {second_distance}, edge: {edge_distance}")
+
+                if np.isclose(edge_distance, (first_distance + second_distance), rtol=1e-3, atol=1e-3):
+                    projections[edge] = projection
+        
+        return projections
+
+
+    def _project_node(self, node: GraphNodeClass, edge: tuple[GraphNodeClass, GraphNodeClass]) -> tuple[float, float]:
+        """
+        Projects node into edge.
+
+        Args:
+            node (GraphNodeClass): The node to be projected.
+            edge (tuple[GraphNodeClass, GraphNodeClass]): The two nodes that define the edge.
+
+        Returns:
+            tuple[float, float]: Coordinates of the projection point.
+        """
+        x1, y1, _ = edge[0].pose  # Coordinates of the first node in the edge
+        x2, y2, _ = edge[1].pose  # Coordinates of the second node in the edge
+        x, y, _ = node.pose       # Coordinates of the node to project
+
+        v_x, v_y = x2 - x1, y2 - y1  # Edge vector (v)
+        u_x, u_y = x - x1, y - y1    # Vector from first node to the node (u)
+
+        # Compute the dot product of u and v
+        dot_product: float = u_x * v_x + u_y * v_y
+        
+        # Compute the squared magnitude of the edge vector (v)
+        v_squared_magnitude: float = v_x ** 2 + v_y ** 2
+        
+        # Compute the projection scalar
+        projection_scalar: float = dot_product / v_squared_magnitude
+        
+        # Compute the projected point on the edge
+        proj_x: float = x1 + projection_scalar * v_x
+        proj_y: float = y1 + projection_scalar * v_y
+        
+        return proj_x, proj_y
 
 
     def _plot_node_on_map(self, pose: tuple[float, float, float], node=True) -> None:
@@ -514,14 +660,14 @@ class GraphBuilder:
 
         y, x, _ = pose  # Ignore theta for now
         px, py = self.world_to_pixel(-x, y, map_img.shape, self._world_limits, self._origin)
-        self._logger.warn("post world")
+        # self._logger.warn("post world")
         if node:
             cv2.circle(map_img, (px, py), 5, (0, 0, 255), -1)
         else:
             cv2.circle(map_img, (px, py), 1, (255, 0, 0), -1)
-        
+        # self._logger.warn(f"pre write {output_path}")
         cv2.imwrite(output_path, map_img)
-
+        # self._logger.warn("post write")
         return None
 
 
@@ -575,6 +721,36 @@ class GraphBuilder:
             y, x, _ = node.pose
             px, py = self.world_to_pixel(-x, y, map_img.shape, self._world_limits, origin=self._origin)
             cv2.circle(map_img, (px, py), 5, (0, 0, 255), -1)
+
+        cv2.imwrite(output_path, map_img)
+
+        return None
+    
+
+    def generate_map_edges(self) -> None:
+        """
+        Generates final path image, drawing both node positions and edges.
+        """
+        map_folder: str = os.path.join("images/maps", self._map_name)
+        file_name: str = "final_" + self._trajectory + ".png"
+        output_path: str = os.path.join("images/final_edges_maps", file_name)
+
+        map_img = cv2.imread(map_folder)
+
+        # Draw nodes
+        for node, _ in self.graph:
+            y, x, _ = node.pose  # Assuming pose = (y, x, theta)
+            px, py = world_to_pixel(-x, y, map_img.shape, self._world_limits, origin=self._origin)
+            cv2.circle(map_img, (px, py), 5, (0, 0, 255), -1)
+
+        # Draw edges
+        for node_1, node_2 in self.graph:
+            if node_1 is not None and node_2 is not None:
+                y1, x1, _ = node_1.pose
+                y2, x2, _ = node_2.pose
+                p1 = world_to_pixel(-x1, y1, map_img.shape, self._world_limits, origin=self._origin)
+                p2 = world_to_pixel(-x2, y2, map_img.shape, self._world_limits, origin=self._origin)
+                cv2.line(map_img, p1, p2, (0, 255, 0), 2)  # Green lines for edges
 
         cv2.imwrite(output_path, map_img)
 

@@ -1,9 +1,9 @@
-from vts_graph_building.node import GraphNode
+from vts_graph_building.node import GraphNodeClass
 
 
 class Graph:
     def __init__(self) -> None:
-        self.nodes: dict[int, GraphNode] = {}
+        self.nodes: dict[int, GraphNodeClass] = {}
         self.edges: list[tuple[int]] = []
-        self.current_node: GraphNode | None = None
+        self.current_node: GraphNodeClass | None = None
         self.node_id: int = 0

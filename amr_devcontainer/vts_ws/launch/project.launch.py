@@ -68,17 +68,15 @@ def generate_launch_description():
 
     return LaunchDescription(
         [
-            Node(
-                package="vts_graph_building",
-                executable="graph_builder",
-                output="screen",
-                arguments=["--ros-args", "--log-level", "WARN"],
-                parameters=[{"start_1": start_1, "start_2": start_2, "world_limits": settings[lab]["world_limits"],
-                             "map_name": settings[lab]["map_name"], "origin": settings[lab]["origin"],
-                             "weights": settings[lab]["weights"], "trajectory_1": trajectory_1,
-                             "trajectory_2": trajectory_2, "model_name": model_name, "publishing_topic": "graph_building_1"}],
-                respawn=False
-            ),
+            # Node(
+            #     package="vts_graph_building",
+            #     executable="graph_builder",
+            #     output="screen",
+            #     arguments=["--ros-args", "--log-level", "WARN"],
+            #     parameters=[{"start_1": start_1, "start_2": start_2, "world_limits": settings[lab]["world_limits"],
+            #                  "map_name": settings[lab]["map_name"], "origin": settings[lab]["origin"],
+            #                  "weights": settings[lab]["weights"], "trajectory_1": trajectory_1,
+            #                  "trajectory_2": trajectory_2, "model_name": model_name, "publishing_topic": "graph_building_1"}]),
             # Node(
             #     package="vts_camera",
             #     executable="camera",
@@ -93,9 +91,7 @@ def generate_launch_description():
                 arguments=["--ros-args", "--log-level", "WARN"],
                 parameters=[{"trajectory": f"{trajectory_1}__{trajectory_2}", "model_name": model_name,
                              "world_limits": settings[lab]["world_limits"], "origin": settings[lab]["origin"],
-                             "map_name": settings[lab]["map_name"]}],
-                respawn=False
-            ),
+                             "map_name": settings[lab]["map_name"]}]),
         ]
     )
 

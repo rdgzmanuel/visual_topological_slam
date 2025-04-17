@@ -1,11 +1,13 @@
 import numpy as np
 import rclpy
+import os
+import pickle
 import sys
 from rclpy.node import Node
 from collections import deque
 from typing import Deque
-from vts_msgs.msg import FullGraph
-from vts_graph_building.node import GraphNode
+from vts_msgs.msg import FullGraph, GraphNode
+from vts_graph_building.node import GraphNodeClass
 from vts_map_alignment.graph_class import Graph
 from vts_map_alignment.map_alignment import MapAligner
 
@@ -31,13 +33,25 @@ class GraphAlignment(Node):
         world_limits: tuple[float, float, float, float] = tuple(self.get_parameter("world_limits").
                                                                  get_parameter_value().double_array_value.tolist())
 
-        self._graph_subscriber = self.create_subscription(
-            FullGraph, "/graph_alignment", self.graph_message_callback, 10
-        )
-        
-        self._graph_queue: Deque[FullGraph] = deque(maxlen=2)
+        # self._graph_subscriber = self.create_subscription(
+        #     FullGraph, "/graph_alignment", self.graph_message_callback, 10
+        # )
+
+        # self._graph_queue: Deque[FullGraph] = deque(maxlen=2)
 
         self._map_aligner: MapAligner = MapAligner(model_name, trajectory, world_limits, origin, map_name)
+
+        self._start_directly()
+    
+
+    def _start_directly(self) -> None:
+        first_graph: str = "graph_1.pkl"
+        second_graph: str = "graph_2.pkl"
+
+        graph_1: list[tuple[GraphNodeClass, GraphNodeClass]] = self.load_graph_data(os.path.join("graphs", first_graph))
+        graph_2: list[tuple[GraphNodeClass, GraphNodeClass]] = self.load_graph_data(os.path.join("graphs", second_graph))
+
+        self.graphs_callback(graph_1, graph_2)
 
 
     def graph_message_callback(self, graph_msg: FullGraph) -> None:
@@ -46,21 +60,36 @@ class GraphAlignment(Node):
         """
         self._graph_queue.append(graph_msg)
         self.get_logger().warn("Received a graph")
+
+        first_graph: str = "graph_1.pkl"
+        second_graph: str = "graph_2.pkl"
         
         if len(self._graph_queue) == 2:
             self.get_logger().warn("Received two graphs. Starting alignment...")
-            graph_msg_1: FullGraph = self._graph_queue.popleft()
-            graph_msg_2: FullGraph = self._graph_queue.popleft()
-            self.graphs_callback(graph_msg_1, graph_msg_2)
+            # graph_msg_1: FullGraph = self._graph_queue.popleft()
+            # graph_msg_2: FullGraph = self._graph_queue.popleft()
+
+            # self.graphs_callback(graph_msg_1, graph_msg_2)
+
+            graph_1: list[tuple[GraphNodeClass, GraphNodeClass]] = self.load_graph_data(os.path.join("graphs", first_graph))
+            graph_2: list[tuple[GraphNodeClass, GraphNodeClass]] = self.load_graph_data(os.path.join("graphs", second_graph))
+
+            self.graphs_callback(graph_1, graph_2)
+
+            
 
 
-    def graphs_callback(self, graph_msg_1: FullGraph, graph_msg_2: FullGraph) -> None:
+    def graphs_callback(self, graph_list_1: list[tuple[GraphNodeClass, GraphNodeClass]],
+                        graph_list_2: list[tuple[GraphNodeClass, GraphNodeClass]]) -> None:
         """
         Processes and aligns two received graphs.
         """
         self.get_logger().warn("Processing graphs")
-        graph_1: Graph = self._process_graph_msg(graph_msg_1)
-        graph_2: Graph = self._process_graph_msg(graph_msg_2)
+        # graph_1: Graph = self._process_graph_msg(graph_msg_1)
+        # graph_2: Graph = self._process_graph_msg(graph_msg_2)
+
+        graph_1: Graph = self._new_process_graph(graph_list_1)
+        graph_2: Graph = self._new_process_graph(graph_list_2)
         
         self.get_logger().warn("Aligning graphs")
         self._map_aligner.align_graphs(graph_1, graph_2)
@@ -83,11 +112,66 @@ class GraphAlignment(Node):
             features: np.ndarray = np.array(node_message.features)
             id: int = node_message.node_id
 
-            new_node: GraphNode = GraphNode(id=id, pose=pose, visual_features=features, image=image)
+            new_node: GraphNodeClass = GraphNodeClass(id=id, pose=pose, visual_features=features, image=image)
             graph.nodes[id] = new_node
 
         for i in range(0, len(edges), 2):
             graph.edges.append((edges[i], edges[i + 1]))
+        
+        return graph
+    
+
+    def _new_process_graph(self, graph_list: list[tuple[GraphNodeClass, GraphNodeClass]]) -> Graph:
+        """
+        
+
+        Args:
+            graph_list (list[tuple[GraphNodeClass, GraphNodeClass]]): _description_
+
+        Returns:
+            Graph: _description_
+        """
+        edges: list[int] = []
+
+        new_graph: Graph = Graph()
+
+        for node, adjacent in graph_list:
+            if np.isnan(node.image).any() or np.isinf(node.image).any():
+                self.get_logger().error(f"Node {node.id} has invalid image data!")
+
+            if np.isnan(node.visual_features).any() or np.isinf(node.visual_features).any():
+                self.get_logger().error(f"Node {node.id} has invalid features!")
+
+            if np.isnan(node.pose).any() or np.isinf(node.pose).any():
+                self.get_logger().error(f"Node {node.id} has invalid pose!")
+
+            image: np.ndarray = np.array(node.image.flatten().tolist()).reshape(list(node.image.shape)).astype(np.uint8)
+            pose: tuple[float, float] = tuple(node.pose)
+            features: np.ndarray = np.array(node.visual_features.tolist())
+            id: int = node.id
+
+            new_node: GraphNodeClass = GraphNodeClass(id=id, pose=pose, visual_features=features, image=image)
+            new_graph.nodes[id] = new_node
+
+            edges.append(node.id)
+            edges.append(adjacent.id)
+
+        for i in range(0, len(edges), 2):
+            new_graph.edges.append((edges[i], edges[i + 1]))
+        self.get_logger().warn(f"{new_graph.edges}")
+        return new_graph
+
+
+    def load_graph_data(self, filename: str) -> list[tuple[GraphNodeClass, GraphNodeClass]]:
+        """
+        Loads the graph and edges data from a pickle file.
+        """
+        if not os.path.exists(filename):
+            raise FileNotFoundError(f"Graph data file '{filename}' not found.")
+
+        with open(filename, "rb") as f:
+            graph = pickle.load(f)
+
         return graph
 
 

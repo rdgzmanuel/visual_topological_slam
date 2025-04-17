@@ -2,6 +2,7 @@ import rclpy
 import sys
 import pickle
 import os
+import gc
 import numpy as np
 import time
 from rclpy.node import Node
@@ -23,7 +24,7 @@ class GraphBuilderNode(Node):
         self.declare_parameter("gamma_proportion", 0.5) # lower bound for peaks
         self._gamma_proportion: float = self.get_parameter("gamma_proportion").get_parameter_value().double_value
 
-        self.declare_parameter("delta_proportion", 0.11) # minimum difference of the a. c. between consecutive peaks
+        self.declare_parameter("delta_proportion", 0.085) # minimum difference of the a. c. between consecutive peaks 0.11
         self._delta_proportion: float = self.get_parameter("delta_proportion").get_parameter_value().double_value
 
         self.declare_parameter("distance_threshold", 3.0)
@@ -61,27 +62,23 @@ class GraphBuilderNode(Node):
         self._weights: tuple[float] = tuple(self.get_parameter("weights").\
                                       get_parameter_value().double_array_value.tolist())
 
-        # self._subscriber_camera = self.create_subscription(
-        #     msg_type=ImageTensor, topic="/camera", callback=self._camera_callback, qos_profile=10
-        # )
+        self._subscriber_camera = self.create_subscription(
+            msg_type=ImageTensor, topic="/camera", callback=self._camera_callback, qos_profile=10
+        )
 
         self._graph_publisher = self.create_publisher(FullGraph, "/graph_alignment", 10)
 
-        # self.graph_builder: GraphBuilder = self._create_graph_builder(trajectory=self._trajectory_1,
-        #                                                               start=self._start_1)
+        self.graph_builder: GraphBuilder = self._create_graph_builder(trajectory=self._trajectory_1,
+                                                                      start=self._start_1)
 
         self._last_image_time = time.time()
         self._timeout_seconds: int = 20
 
-        # self._timer = self.create_timer(1.0, self._check_timeout)
+        self._timer = self.create_timer(1.0, self._check_timeout)
 
         self._is_first_trajectory: bool = True
 
-
-        self._publish_loaded_graphs()
-
-        time.sleep(5)
-        sys.exit(0)
+        # self._publish_loaded_graphs()
 
 
     def _create_graph_builder(self, trajectory: str, start: tuple[float, float, float]) -> GraphBuilder:
@@ -89,7 +86,7 @@ class GraphBuilderNode(Node):
         Helper function to create a new instance of the GraphBuilder.
         """
 
-        self.get_logger().warn("tryin to create builder")
+        # self.get_logger().warn("tryin to create builder")
         graph_builder = GraphBuilder(self._n, self._gamma_proportion, self._delta_proportion,
                             self._distance_threshold, start, self._world_limits, self._map_name,
                             self._origin, self._weights, trajectory, self._model_name)
@@ -104,64 +101,71 @@ class GraphBuilderNode(Node):
             camera_msg (ImageTensor): Camera message containing tensor and shape data.
         """
 
-        self.get_logger().warn("Receives message")
+        # self.get_logger().warn("Receives message")
         self._last_image_time = time.time()
 
         prev_index: int = 0
         data: list[float] = camera_msg.data
         image_name: str = camera_msg.image_name
 
-        self.get_logger().warn(f"name {image_name}")
+        # self.get_logger().warn(f"name {image_name}")
 
         self.graph_builder.new_upgrade_pose(image_name)
-        self.get_logger().warn("updates pose")
+        # self.get_logger().warn("updates pose")
         array_data: np.ndarray = np.array(data).astype("float32")
         self.graph_builder.update_matrices(array_data)
-        self.get_logger().warn("updates matrices")
+        # self.get_logger().warn("updates matrices")
 
         if len(self.graph_builder.window_images) > 1:
             lambda_2, valley_idx = self.graph_builder.look_for_valley()
-            self.get_logger().warn("look for valley")
 
             if valley_idx not in [0, prev_index - 1]:
-                if self.graph_builder.current_node is not None:
-                    self.get_logger().warn(f"found valley: {self.graph_builder.current_node.pose}")
-                else:
-                    self.get_logger().warn("found valley")
                 prev_index = valley_idx
                 self.graph_builder.update_graph()
-                self.get_logger().warn("Finished update")
 
 
     def _publish_graph(self) -> None:
         """
         Publishes graph in graph_bulding topic
         """
-        self.get_logger().warn("Publishing Graph...")
-        graph: list = []
-        edges: list[int] = []
+        # self.get_logger().warn("Publishing Graph...")
+        # graph: list = []
+        # edges: list[int] = []
 
-        for node, adjacent in self.graph_builder.graph:
-            # self.get_logger().warn("message")
-            node_message: GraphNode = GraphNode()
-            # self.get_logger().warn(f"pose {list(node.pose)}")
-            node_message.pose = list(node.pose)
-            # self.get_logger().warn(f"shape {list(node.image.shape)}")
-            node_message.shape = list(node.image.shape)
-            node_message.image = node.image.flatten().tolist()
-            # self.get_logger().warn(f" visua shape {list(node.visual_features.shape)}")
-            node_message.features = node.visual_features.tolist()
-            node_message.node_id = node.id
+        # for node, adjacent in self.graph_builder.graph:
+        #     if np.isnan(node.image).any() or np.isinf(node.image).any():
+        #         self.get_logger().error(f"Node {node.id} has invalid image data!")
 
-            graph.append(node_message)
-            edges.append(node.id)
-            edges.append(adjacent.id)
+        #     if np.isnan(node.visual_features).any() or np.isinf(node.visual_features).any():
+        #         self.get_logger().error(f"Node {node.id} has invalid features!")
+
+        #     if np.isnan(node.pose).any() or np.isinf(node.pose).any():
+        #         self.get_logger().error(f"Node {node.id} has invalid pose!")
+            
+
+        #     # self.get_logger().warn("message")
+        #     node_message: GraphNode = GraphNode()
+        #     self.get_logger().warn(f"pose {list(node.pose)}")
+        #     node_message.pose = list(node.pose)
+        #     self.get_logger().warn(f"shape {list(node.image.shape)}")
+        #     node_message.shape = list(node.image.shape)
+        #     node_message.image = node.image.flatten().tolist()
+        #     self.get_logger().warn(f" visua shape {list(node.visual_features.shape)}")
+        #     node_message.features = node.visual_features.tolist()
+        #     node_message.node_id = node.id
+
+        #     self.get_logger().warn(f"image size: {len(node_message.image)}, features size: {len(node_message.features)}")
+
+
+        #     graph.append(node_message)
+        #     edges.append(node.id)
+        #     edges.append(adjacent.id)
 
         self.get_logger().warn("creating graph")
 
         graph_message: FullGraph = FullGraph()
-        graph_message.nodes = graph
-        graph_message.edges = edges
+        # graph_message.nodes = graph
+        graph_message.edges = [1]
 
         self.save_graph_data(graph=self.graph_builder.graph, first=self._is_first_trajectory)
         self.get_logger().warn("Graph saved")
@@ -177,8 +181,6 @@ class GraphBuilderNode(Node):
         filename: str = "graph_1.pkl" if first else "graph_2.pkl"
         filename: str = os.path.join("graphs", filename)
 
-        # Directly store the graph structure (including nodes and edges)
-        # No need to manually serialize each field when using pickle
         with open(filename, "wb") as f:
             pickle.dump(graph, f)
 
@@ -190,15 +192,16 @@ class GraphBuilderNode(Node):
         Resets the graph builder for processing the second trajectory by creating a new instance.
         """
 
-        self.get_logger().warn("First trajectory complete. Starting to process the second trajectory.")
-
-        new_graph_builder = self._create_graph_builder(self._trajectory_2, self._start_2)
+        self.get_logger().warn("First trajectory complete. Starting to process the second trajectory...")
+        del self.graph_builder
+        gc.collect()
+        time.sleep(3)  # To let current builder to finish its tasks
+        # new_graph_builder = self._create_graph_builder(self._trajectory_2, self._start_2)
         self.get_logger().warn("builder created")
-        self.graph_builder = new_graph_builder
+        self.graph_builder = self._create_graph_builder(self._trajectory_2, self._start_2)
         self._is_first_trajectory = False
 
         self.get_logger().warn("Reset succesful")
-
 
 
     def _check_timeout(self) -> None:
@@ -219,7 +222,8 @@ class GraphBuilderNode(Node):
                 self.get_logger().warn("No images received for a while. Generating map and shutting down...")
                 self.graph_builder.generate_map()
                 self._publish_graph()
-                return
+                time.sleep(3)
+                sys.exit(0)
     
 
     def load_graph_data(self, filename: str) -> list[tuple[GraphNode, GraphNode]]:
