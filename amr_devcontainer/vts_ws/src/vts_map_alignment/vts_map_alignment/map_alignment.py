@@ -61,9 +61,12 @@ class MapAligner:
             lookup_graph (Graph): The graph whose nodes are being evaluated and fused/inserted.
         """
         for node in lookup_graph.nodes.values():
-            best_match: GraphNodeClass | None = self._search_best_match(node)
+            best_match: GraphNodeClass
+            score: float
 
-            if best_match is not None:
+            best_match, score = self._search_best_match(node)
+
+            if score < self._threshold:
                 self._fusion_nodes(node, best_match)
                 self.updated_graph.current_node = best_match
             else:
@@ -71,7 +74,7 @@ class MapAligner:
                 new_node = copy.deepcopy(node)
                 new_node.id = self.updated_graph.node_id
 
-                self._include_node(new_node)
+                self._include_node(new_node, best_match)
 
                 self.updated_graph.nodes[new_node.id] = new_node
                 self.updated_graph.current_node = new_node
@@ -81,7 +84,7 @@ class MapAligner:
         return None
 
 
-    def _include_node(self, new_node: GraphNodeClass) -> None:
+    def _include_node(self, new_node: GraphNodeClass, best_match: GraphNodeClass) -> None:
         """
         Adds a new node to the graph, connects it to the current node,
         and attempts to reroute an existing neighbor edge through this node.
@@ -89,16 +92,16 @@ class MapAligner:
         Args:
             new_node (GraphNodeClass): The new node to insert into the graph.
         """
-        current_node = self.updated_graph.current_node
-        next_node = self._find_next_node((current_node, new_node))
-        self.updated_graph.edges.append((current_node.id, new_node.id))
+
+        next_node = self._find_next_node((best_match, new_node))
+        self.updated_graph.edges.append((best_match.id, new_node.id))
 
         if next_node is not None:
             self.updated_graph.edges.append((new_node.id, next_node.id))
-            # Remove direct connection from current_node to next_node if it exists
+            # Remove direct connection from best_match to next_node if it exists
             
-            direct_edge = (current_node.id, next_node.id)
-            reverse_edge = (next_node.id, current_node.id)
+            direct_edge = (best_match.id, next_node.id)
+            reverse_edge = (next_node.id, best_match.id)
             if direct_edge in self.updated_graph.edges:
                 self.updated_graph.edges.remove(direct_edge)
             if reverse_edge in self.updated_graph.edges:
@@ -118,19 +121,19 @@ class MapAligner:
         Returns:
             Optional[GraphNodeClass]: Neighbor node to connect through, or None if none match well.
         """
-        current_node, new_node = new_edge
-        direction_vector: np.array = np.array(new_node.pose[:2]) - np.array(current_node.pose[:2])
+        previous_match, new_node = new_edge
+        direction_vector: np.array = np.array(new_node.pose[:2]) - np.array(previous_match.pose[:2])
 
         max_similarity: float = float("-inf")
         best_match: None | GraphNodeClass = None
 
-        relevant_edges_idx: list[tuple[int, int]] = [e for e in self.updated_graph.edges if current_node.id in e]
+        relevant_edges_idx: list[tuple[int, int]] = [e for e in self.updated_graph.edges if previous_match.id in e]
         relevant_edges: list[tuple[GraphNodeClass, GraphNodeClass]] = [(self.updated_graph.nodes[node_idx], self.updated_graph.nodes[adj_idx])
                                                                        for node_idx, adj_idx in relevant_edges_idx]
 
         for edge in relevant_edges:
-            neighbor: GraphNodeClass = edge[1] if edge[0] == current_node else edge[0]
-            edge_vector: np.array = np.array(neighbor.pose[:2]) - np.array(current_node.pose[:2])
+            neighbor: GraphNodeClass = edge[1] if edge[0] == previous_match else edge[0]
+            edge_vector: np.array = np.array(neighbor.pose[:2]) - np.array(previous_match.pose[:2])
 
             similarity: float = np.dot(direction_vector, edge_vector)
 
@@ -141,7 +144,7 @@ class MapAligner:
         return best_match
 
 
-    def _search_best_match(self, node: GraphNodeClass, k: int = 3) -> GraphNodeClass:
+    def _search_best_match(self, node: GraphNodeClass, k: int = 3) -> tuple[GraphNodeClass, float]:
         """
         Find the best matching node to the given node in the lookup graph using a KD-tree and cosine similarity.
 
@@ -165,7 +168,7 @@ class MapAligner:
         candidates: list[GraphNodeClass] = [node_list[i] for i in np.atleast_1d(indices)]
         
         best_node: GraphNodeClass | None = None
-        best_score: float = self._threshold
+        best_score: float = float("inf")
 
         for i, candidate in enumerate(candidates):
             pose_dist: float = distances[i]
@@ -177,7 +180,7 @@ class MapAligner:
                 best_score = score
                 best_node = candidate
 
-        return best_node
+        return best_node, best_score
 
 
     def _fusion_nodes(self, node: GraphNodeClass, best_match: GraphNodeClass) -> None:

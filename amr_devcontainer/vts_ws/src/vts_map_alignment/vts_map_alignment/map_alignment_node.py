@@ -33,15 +33,15 @@ class GraphAlignment(Node):
         world_limits: tuple[float, float, float, float] = tuple(self.get_parameter("world_limits").
                                                                  get_parameter_value().double_array_value.tolist())
 
-        # self._graph_subscriber = self.create_subscription(
-        #     FullGraph, "/graph_alignment", self.graph_message_callback, 10
-        # )
+        self._graph_subscriber = self.create_subscription(
+            FullGraph, "/graph_alignment", self.graph_message_callback, 10
+        )
 
-        # self._graph_queue: Deque[FullGraph] = deque(maxlen=2)
+        self._graph_queue: Deque[FullGraph] = deque(maxlen=2)
 
         self._map_aligner: MapAligner = MapAligner(model_name, trajectory, world_limits, origin, map_name)
 
-        self._start_directly()
+        # self._start_directly()
     
 
     def _start_directly(self) -> None:
