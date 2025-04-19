@@ -45,7 +45,7 @@ def main() -> None:
     val_data: DataLoader
     train_data, val_data, _ = load_cold_data(SEQ_DATA_PATH, DATA_PATH, batch_size=batch_size)
 
-    name: str = "cnn_avg_2"
+    name: str = "cnn_avg_1"
     writer: SummaryWriter = SummaryWriter(f"runs/{name}")
 
     # define model

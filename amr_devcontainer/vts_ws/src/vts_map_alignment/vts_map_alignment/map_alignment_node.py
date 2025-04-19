@@ -76,8 +76,6 @@ class GraphAlignment(Node):
 
             self.graphs_callback(graph_1, graph_2)
 
-            
-
 
     def graphs_callback(self, graph_list_1: list[tuple[GraphNodeClass, GraphNodeClass]],
                         graph_list_2: list[tuple[GraphNodeClass, GraphNodeClass]]) -> None:

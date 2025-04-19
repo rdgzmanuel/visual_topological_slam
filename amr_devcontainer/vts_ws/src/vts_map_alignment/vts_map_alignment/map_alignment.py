@@ -28,73 +28,120 @@ class MapAligner:
 
         # Neighbor finding
         self._pose_weight: float = 0.75
-        self._threshold: float = 2.0
+        self._threshold: float = 1.5
 
         # Image stitching
         self._min_matches: int = 10
         self._camera: Camera = Camera(model_name)
+
+        # Map alignment
+        self._similarity_threshold: float = 0.65
 
         self._logger = rclpy.logging.get_logger('MapAlignment')
 
 
     def align_graphs(self, graph_1: Graph, graph_2: Graph) -> None:
         """
-
+        Fuses two topological graphs into one unified graph stored in self.updated_graph.
 
         Args:
-            graph_1 (Graph): _description_
-            graph_2 (Graph): _description_
-
-        Returns:
-            Graph: _description_
+            graph_1 (Graph): The base graph to copy and expand.
+            graph_2 (Graph): The secondary graph whose nodes will be integrated.
         """
-        self.updated_graph: Graph = copy.deepcopy(graph_2)
-        # for node in graph_1.nodes.values():
-        #     matches: list[GraphNodeClass] = self._update_graph(node, graph_2)
+        self.updated_graph: Graph = copy.deepcopy(graph_1)
+        self.updated_graph.node_id = max(self.updated_graph.nodes.keys()) + 1
+        self._new_update_graph(graph_2)
 
-        # for node in graph_2.nodes.values():
-        #     if node not in matches:
-        #         _ = self._update_graph(node, graph_1, update_matches=False)
+
+    def _new_update_graph(self, lookup_graph: Graph) -> None:
+        """
+        Updates `self.updated_graph` with nodes and edges from a second graph.
+
+        Args:
+            lookup_graph (Graph): The graph whose nodes are being evaluated and fused/inserted.
+        """
+        for node in lookup_graph.nodes.values():
+            best_match: GraphNodeClass | None = self._search_best_match(node)
+
+            if best_match is not None:
+                self._fusion_nodes(node, best_match)
+                self.updated_graph.current_node = best_match
+            else:
+                
+                new_node = copy.deepcopy(node)
+                new_node.id = self.updated_graph.node_id
+
+                self._include_node(new_node)
+
+                self.updated_graph.nodes[new_node.id] = new_node
+                self.updated_graph.current_node = new_node
+
+                self.updated_graph.node_id += 1
         
         return None
 
 
-    def _update_graph(self, node: GraphNodeClass, lookup_graph: Graph,
-                       update_matches: bool = True) -> list[GraphNodeClass]:
+    def _include_node(self, new_node: GraphNodeClass) -> None:
         """
-        
+        Adds a new node to the graph, connects it to the current node,
+        and attempts to reroute an existing neighbor edge through this node.
 
         Args:
-            node (GraphNodeClass): _description_
-            updated_graph (Graph): _description_
-            lookup_graph (Graph): _description_
-            update_matches (bool, optional): _description_. Defaults to True.
-            matches (list[GraphNodeClass], optional): _description_. Defaults to [].
+            new_node (GraphNodeClass): The new node to insert into the graph.
         """
-        matches: list[GraphNodeClass] = []
+        current_node = self.updated_graph.current_node
+        next_node = self._find_next_node((current_node, new_node))
+        self.updated_graph.edges.append((current_node.id, new_node.id))
 
-        best_match: GraphNodeClass = self._search_best_match(node, lookup_graph)
-        new_id: int = self.updated_graph.node_id
-        self.updated_graph.node_id += 1
-
-        if best_match is not None:
-            new_node = self._fusion_nodes(node, best_match, new_id)
-            if update_matches:
-                matches.append(best_match)
-        else:
-            new_node = copy.deepcopy(node)
-            new_node.id = new_id
-
-        if self.updated_graph.current_node is not None:
-            self.updated_graph.edges.append((self.updated_graph.current_node.id, new_node.id))
+        if next_node is not None:
+            self.updated_graph.edges.append((new_node.id, next_node.id))
+            # Remove direct connection from current_node to next_node if it exists
+            
+            direct_edge = (current_node.id, next_node.id)
+            reverse_edge = (next_node.id, current_node.id)
+            if direct_edge in self.updated_graph.edges:
+                self.updated_graph.edges.remove(direct_edge)
+            if reverse_edge in self.updated_graph.edges:
+                self.updated_graph.edges.remove(reverse_edge)
         
-        self.updated_graph.nodes[new_node.id] = new_node
-        self.updated_graph.current_node = new_node
+        return None
 
-        return matches
-    
 
-    def _search_best_match(self, node: GraphNodeClass, lookup_graph: Graph, k: int = 3) -> GraphNodeClass:
+    def _find_next_node(self, new_edge: tuple[GraphNodeClass, GraphNodeClass]) -> GraphNodeClass | None:
+        """
+        Finds the neighbor of the current node that most closely aligns
+        (via dot product) with the direction of the new edge.
+
+        Args:
+            new_edge (tuple[GraphNodeClass, GraphNodeClass]): Tuple of (current_node, new_node)
+
+        Returns:
+            Optional[GraphNodeClass]: Neighbor node to connect through, or None if none match well.
+        """
+        current_node, new_node = new_edge
+        direction_vector: np.array = np.array(new_node.pose[:2]) - np.array(current_node.pose[:2])
+
+        max_similarity: float = float("-inf")
+        best_match: None | GraphNodeClass = None
+
+        relevant_edges_idx: list[tuple[int, int]] = [e for e in self.updated_graph.edges if current_node.id in e]
+        relevant_edges: list[tuple[GraphNodeClass, GraphNodeClass]] = [(self.updated_graph.nodes[node_idx], self.updated_graph.nodes[adj_idx])
+                                                                       for node_idx, adj_idx in relevant_edges_idx]
+
+        for edge in relevant_edges:
+            neighbor: GraphNodeClass = edge[1] if edge[0] == current_node else edge[0]
+            edge_vector: np.array = np.array(neighbor.pose[:2]) - np.array(current_node.pose[:2])
+
+            similarity: float = np.dot(direction_vector, edge_vector)
+
+            if similarity > self._similarity_threshold and similarity > max_similarity:
+                max_similarity = similarity
+                best_match = neighbor
+
+        return best_match
+
+
+    def _search_best_match(self, node: GraphNodeClass, k: int = 3) -> GraphNodeClass:
         """
         Find the best matching node to the given node in the lookup graph using a KD-tree and cosine similarity.
 
@@ -106,8 +153,8 @@ class MapAligner:
         Returns:
             GraphNodeClass: The best matching node.
         """
-        node_positions: np.ndarray = np.array([n.pose[:2] for n in lookup_graph.nodes.values()])
-        node_list: list[GraphNodeClass] = list(lookup_graph.nodes.values())
+        node_positions: np.ndarray = np.array([n.pose[:2] for n in self.updated_graph.nodes.values()])
+        node_list: list[GraphNodeClass] = list(self.updated_graph.nodes.values())
 
         kd_tree: KDTree = KDTree(node_positions)
 
@@ -133,28 +180,29 @@ class MapAligner:
         return best_node
 
 
-    def _fusion_nodes(self, node_1: GraphNodeClass, node_2: GraphNodeClass, new_id: int) -> GraphNodeClass:
+    def _fusion_nodes(self, node: GraphNodeClass, best_match: GraphNodeClass) -> None:
         """
         
 
         Args:
-            node_1 (GraphNodeClass): _description_
-            node_2 (GraphNodeClass): _description_
+            node_1 (GraphNodeClass): Node coming from graph 2.
+            node_2 (GraphNodeClass): Node coming from graph 1.
 
         Returns:
             GraphNodeClass: _description_
         """
 
-        new_pose: tuple[float, float, float] = self._average_pose(node_1.pose, node_2.pose)
-        new_image: np.ndarray = stitch_images(node_1.image, node_2.image,
+        new_pose: tuple[float, float, float] = self._average_pose(node.pose, best_match.pose)
+        new_image: np.ndarray = stitch_images(node.image, best_match.image,
                                                 min_matches=self._min_matches)
         tensor_image: torch.Tensor = process_stitched_image(new_image)
         new_visual_features: np.ndarray = self._extract_features(tensor_image)
 
-        new_node: GraphNodeClass = GraphNodeClass(id=new_id, pose=new_pose, visual_features=new_visual_features,
-                                        image=new_image)
+        best_match.pose = new_pose
+        best_match.image = new_image
+        best_match.visual_features = new_visual_features
 
-        return new_node
+        return None
     
 
     def _extract_features(self, image: torch.Tensor) -> np.ndarray:

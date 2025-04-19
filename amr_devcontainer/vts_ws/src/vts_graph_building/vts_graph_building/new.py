@@ -3,7 +3,6 @@ import cv2
 import os
 import rclpy.logging
 import torch
-import time
 from torchvision import transforms
 import gtsam
 from gtsam import Pose2, BetweenFactorPose2, noiseModel
@@ -72,7 +71,6 @@ class GraphBuilder:
 
         # rewiring
         self._rewiring_threshold: float = 3.0
-        self._external_rewiring_threshold: float = 1.5
 
         self._logger = rclpy.logging.get_logger('GraphBuilder')
 
@@ -414,28 +412,13 @@ class GraphBuilder:
                 # Revisit confirmed
                 closest_neighbor = self._fusion_nodes(new_node, closest_neighbor)
                 loop_nodes: list[GraphNodeClass] = self._obtain_loop_nodes(closest_neighbor)
-                # self._logger.warn(f"Loop nodes {[node.id for node in loop_nodes]}")
                 relevant_edges: list[tuple[GraphNodeClass, GraphNodeClass]] = self._obtain_relevant_edges(loop_nodes)
                 self._optimize_loop_poses(loop_nodes, relevant_edges)
-                # self._logger.warn(f"Opitimizing time {time.time() - start}")
-                self._rewire_graph(loop_nodes, relevant_edges, self._rewiring_threshold)
-                self.current_node = closest_neighbor
-                # self._logger.warn(f"Finsished rewiring {[(node.id, adj.id) for node, adj in self.graph]}")
-                # self._logger.warn(f"Poses {[(node.id, node.pose) for node, _ in self.graph]}")
+                self._rewire_graph(loop_nodes, relevant_edges)
 
             else:
                 self._node_id += 1
-                                   
-                # self._logger.warn(f"regular add {self.current_node.id} {new_node.id}")
                 self.graph.append((self.current_node, new_node))
-
-                # Before adding a new edge, check current node's neighbors and edges to see if we can project them
-                relevant_edges: list[tuple[GraphNodeClass, GraphNodeClass]] = [edge for edge in self.graph if self.current_node in edge] 
-                self._rewire_graph([new_node], relevant_edges, self._external_rewiring_threshold)
-
-                relevant_nodes: list[GraphNodeClass] = list(self.current_node.neighbors)
-                self._rewire_graph(relevant_nodes, [(self.current_node, new_node)], self._external_rewiring_threshold)
-
                 new_node.neighbors.add(self.current_node)
                 self.current_node.neighbors.add(new_node)
                 self.current_node = new_node
@@ -477,14 +460,16 @@ class GraphBuilder:
             new_node (GraphNodeClass): _description_
             closets_neighbor (GraphNodeClass): _description_
         """
-        # new_pose = self._average_pose(closest_neighbor.pose, new_node.pose)
+        new_pose: tuple[float, float, float] = self._average_pose(new_node.pose,
+                                                                          closest_neighbor.pose)
+
         new_image: np.ndarray = self.stitch_images(new_node.image, closest_neighbor.image,
                                             min_matches=self._min_matches)
         new_image = cv2.resize(new_image, (self._image_shape[1], self._image_shape[0]))
         tensor_image: torch.Tensor = process_stitched_image(new_image)
         new_visual_features: np.ndarray = self._extract_features(tensor_image)
 
-        # closest_neighbor.pose = new_pose
+        closest_neighbor.pose = new_pose
         closest_neighbor.image = new_image
         closest_neighbor.visual_features = new_visual_features
         # self._plot_node_on_map(closest_neighbor.pose)
@@ -495,7 +480,6 @@ class GraphBuilder:
             new_edge: tuple[GraphNodeClass, GraphNodeClass] = (self.current_node, closest_neighbor)
             if new_edge not in self.graph: # and (new_edge[1], new_edge[0]) not in self.graph:
                 self.graph.append(new_edge)
-                # self._logger.warn(f"Fusion {new_edge[0].id} {new_edge[1].id}")
 
         return closest_neighbor
     
@@ -550,11 +534,16 @@ class GraphBuilder:
         node: GraphNodeClass = self.current_node
 
         if node != closest_neighbor:
+            self._logger.warn(f"Neighbor {closest_neighbor.id}, {closest_neighbor.pose[:2]}")
+            self._logger.warn(f"Node {node.id}, {node.pose[:2]}")
+            for node, adj in self.graph:
+                self._logger.warn(f"node {node.id}, adj {adj.id}")
             i: int = 2
             while node != closest_neighbor:
                 loop_nodes.append(node)
                 node = self.graph[-i][0]
                 i += 1
+                self._logger.warn(f"Node {node.id}")
             
             loop_nodes.append(closest_neighbor)
 
@@ -574,9 +563,7 @@ class GraphBuilder:
         return [edge for edge in self.graph if edge[0] in loop_nodes and edge[1] in loop_nodes]
 
 
-    def _rewire_graph(self, loop_nodes: list[GraphNodeClass],
-                      relevant_edges: list[tuple[GraphNodeClass, GraphNodeClass]],
-                      threshold: float) -> None:
+    def _rewire_graph(self, loop_nodes: list[GraphNodeClass], relevant_edges: list[tuple[GraphNodeClass, GraphNodeClass]]) -> None:
         """
         
         """
@@ -584,26 +571,19 @@ class GraphBuilder:
         for node in loop_nodes:
             x, y, _ = node.pose
             projections: dict[tuple[GraphNodeClass, GraphNodeClass], tuple[float, float]] = self._get_projections(node, relevant_edges)
+            self._logger.warn(f"Projection {projections}")
             for edge, projection in projections.items():
+                self._logger.warn(f"Projection {projection}")
                 if projection is not None:
                     distance: float = self._compute_distance(x, y, projection[0], projection[1])
+                    self._logger.warn(f"Distance {distance}")
 
-                    if distance < threshold:
-                        # self._logger.warn(f"Rewiring {edge[0].id} {edge[1].id} {node.id}")
+                    if distance < self._rewiring_threshold:
+                        self._logger.warn("Rewiring")
                         # rewired edge found
                         self.graph.append((edge[0], node))
                         self.graph.append((node, edge[1]))
-                        edge[0].neighbors.add(node)
-                        edge[1].neighbors.add(node)
-                        node.neighbors.add(edge[0])
-                        node.neighbors.add(edge[1])
-                        if edge in self.graph:
-                            self.graph.remove(edge)
-                            if (edge[1], edge[0]) in self.graph:
-                                if edge[1] in edge[0].neighbors:
-                                    edge[0].neighbors.remove(edge[1])
-                                if edge[0] in edge[1].neighbors:
-                                    edge[1].neighbors.remove(edge[0])
+                        self.graph.remove(edge)
 
 
     def _get_projections(self, node: GraphNodeClass,
@@ -623,7 +603,9 @@ class GraphBuilder:
 
         for edge in relevant_edges:
             if node not in edge:
+                self._logger.warn(f"Node {node.id} not in edge {edge[0].id}, {edge[1].id}")
                 projection: tuple[float, float] = self._project_node(node, edge)
+                self._logger.warn(f"Node {node.id} projection: {projection}")
                 edge_distance: float = self._compute_distance(edge[0].pose[0], edge[0].pose[1], edge[1].pose[0], edge[1].pose[1])
 
                 x: float
@@ -631,6 +613,8 @@ class GraphBuilder:
                 x, y = projection
                 first_distance: float = self._compute_distance(edge[0].pose[0], edge[0].pose[1], x, y)
                 second_distance: float = self._compute_distance(edge[1].pose[0], edge[1].pose[1], x, y)
+
+                self._logger.warn(f"First {first_distance}, second: {second_distance}, edge: {edge_distance}")
 
                 if np.isclose(edge_distance, (first_distance + second_distance), rtol=1e-3, atol=1e-3):
                     projections[edge] = projection
@@ -672,58 +656,44 @@ class GraphBuilder:
         return proj_x, proj_y
     
 
-    def _optimize_loop_poses(
-        self,
-        nodes: list[GraphNodeClass],
-        graph_edges: list[tuple[GraphNodeClass, GraphNodeClass]]
-    ) -> None:
+    def _optimize_loop_poses(self, nodes: list[GraphNodeClass],
+                             graph_edges: list[tuple[GraphNodeClass, GraphNodeClass]]) -> None:
         """
-        Applies pose graph optimization to correct loop closure drift.
-        The first node in `nodes` is assumed to be the fixed reference (e.g., corridor entry).
+        
 
         Args:
-            nodes (List[GraphNodeClass]): All nodes in the loop, including the fixed corridor node.
-            graph_edges (List[Tuple[GraphNodeClass, GraphNodeClass]]): List of relative pose constraints between nodes.
+            nodes (list[GraphNodeClass]): _description_
+            graph_edges (list[tuple[GraphNodeClass, GraphNodeClass]]): _description_
+
+        Returns:
+            _type_: _description_
         """
+
         graph: gtsam.NonlinearFactorGraph = gtsam.NonlinearFactorGraph()
         initial_estimates: gtsam.Values = gtsam.Values()
 
-        # Logging for debugging
-        # self._logger.warn(f"Optimizing poses for nodes: {[(node.id, node.pose) for node in nodes]}")
-        # self._logger.warn(f"Graph edges: {[(n1.id, n2.id) for n1, n2 in graph_edges]}")
+        # Add odometry factors
+        for node1, node2 in graph_edges:
+            pose1: Pose2 = Pose2(*node1.pose)
+            pose2: Pose2 = Pose2(*node2.pose)
+            relative_pose: Pose2 = pose1.between(pose2)
+            model = noiseModel.Diagonal.Sigmas([0.1, 0.1, 0.1])  # [x, y, theta] std dev
+            graph.add(BetweenFactorPose2(node1.id, node2.id, relative_pose, model))
+            if not initial_estimates.exists(node1.id):
+                initial_estimates.insert(node1.id, pose1)
+            if not initial_estimates.exists(node2.id):
+                initial_estimates.insert(node2.id, pose2)
 
-        # --- Step 1: Add a prior to fix the first node (corridor node) ---
-        if len(nodes) > 0:
-            fixed_node: GraphNodeClass = nodes[0]
-            fixed_pose: Pose2 = Pose2(*fixed_node.pose)
-            prior_noise = noiseModel.Diagonal.Sigmas([1e-6, 1e-6, 1e-6])
-            graph.add(gtsam.PriorFactorPose2(fixed_node.id, fixed_pose, prior_noise))
-            initial_estimates.insert(fixed_node.id, fixed_pose)
+        # Optimize the graph
+        params: gtsam.LevenbergMarquardtParams = gtsam.LevenbergMarquardtParams()
+        optimizer: gtsam.LevenbergMarquardtOptimizer = gtsam.LevenbergMarquardtOptimizer(graph, initial_estimates, params)
+        result: gtsam.Values = optimizer.optimize()
 
-            # --- Step 2: Add binary relative pose constraints (edges) ---
-            for node1, node2 in graph_edges:
-                pose1: Pose2 = Pose2(*node1.pose)
-                pose2: Pose2 = Pose2(*node2.pose)
-                relative_pose: Pose2 = pose1.between(pose2)
-                model = noiseModel.Diagonal.Sigmas([0.1, 0.1, 0.1])
-                graph.add(BetweenFactorPose2(node1.id, node2.id, relative_pose, model))
-
-                # Insert initial guesses if not already present
-                if not initial_estimates.exists(node1.id):
-                    initial_estimates.insert(node1.id, pose1)
-                if not initial_estimates.exists(node2.id):
-                    initial_estimates.insert(node2.id, pose2)
-
-            # --- Step 3: Optimize the pose graph ---
-            params: gtsam.LevenbergMarquardtParams = gtsam.LevenbergMarquardtParams()
-            optimizer: gtsam.LevenbergMarquardtOptimizer = gtsam.LevenbergMarquardtOptimizer(graph, initial_estimates, params)
-            result: gtsam.Values = optimizer.optimize()
-
-            # --- Step 4: Update the node poses with the optimized result ---
-            for node in nodes:
-                if result.exists(node.id):
-                    optimized_pose: Pose2 = result.atPose2(node.id)
-                    node.pose = (optimized_pose.x(), optimized_pose.y(), optimized_pose.theta())
+        # Update node poses with optimized values
+        for node in nodes:
+            if result.exists(node.id):
+                optimized_pose: Pose2 = result.atPose2(node.id)
+                node.pose = (optimized_pose.x(), optimized_pose.y(), optimized_pose.theta())
         
         return None
 
@@ -889,23 +859,26 @@ class GraphBuilder:
             # Compute homography
             H, _ = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
 
+            # self._logger.warn("pre warp")
+
             # Warp first image to align with the second
             height, width, _ = image_2.shape
             if H is not None and H.shape == (3, 3):
                 H = H.astype(np.float32)  # or np.float64
                 warped_img1 = cv2.warpPerspective(image_1, H, (width * 2, height))
-                # Place second image on the stitched result
-                warped_img1[0:height, 0:width] = image_2
-
-                # Convert to grayscale and find non-zero regions for blending
-                gray_warped: np.ndarray = cv2.cvtColor(warped_img1, cv2.COLOR_BGR2GRAY)
-                _, mask = cv2.threshold(gray_warped, 1, 255, cv2.THRESH_BINARY)
-                # self._logger.warn("pre block")
-                # Crop the stitched image
-                stitched_image: np.ndarray = self.crop_black_borders(warped_img1, mask)
             else:
-                stitched_image = self.concat_images(image_1, image_2)
-            
+                raise ValueError("Homography matrix H is invalid. Check shape and computation.")
+
+            # Place second image on the stitched result
+            warped_img1[0:height, 0:width] = image_2
+
+            # Convert to grayscale and find non-zero regions for blending
+            gray_warped: np.ndarray = cv2.cvtColor(warped_img1, cv2.COLOR_BGR2GRAY)
+            _, mask = cv2.threshold(gray_warped, 1, 255, cv2.THRESH_BINARY)
+            # self._logger.warn("pre block")
+            # Crop the stitched image
+            stitched_image: np.ndarray = self.crop_black_borders(warped_img1, mask)
+        
         else:
             stitched_image = self.concat_images(image_1, image_2)
 
