@@ -106,6 +106,8 @@ class MapAligner:
                 self.updated_graph.edges.remove(direct_edge)
             if reverse_edge in self.updated_graph.edges:
                 self.updated_graph.edges.remove(reverse_edge)
+            
+            self._check_next_node_neighbors(next_node, new_node)
         
         return None
 
@@ -181,6 +183,47 @@ class MapAligner:
                 best_node = candidate
 
         return best_node, best_score
+    
+
+    def _check_next_node_neighbors(self, next_node: GraphNodeClass, new_node: GraphNodeClass) -> None:
+        """
+        
+
+        Args:
+            next_node (GraphNodeClass): _description_
+        """
+        # Now we check the next node's neighbors in case we can also introduce the new node between them.
+        direction_vector: np.array = np.array(next_node.pose[:2]) - np.array(new_node.pose[:2])
+
+        relevant_edges_idx: list[tuple[int, int]] = [e for e in self.updated_graph.edges
+                                                     if next_node.id in e and new_node.id not in e]
+        relevant_edges: list[tuple[GraphNodeClass, GraphNodeClass]] = [(self.updated_graph.nodes[node_idx], self.updated_graph.nodes[adj_idx])
+                                                                    for node_idx, adj_idx in relevant_edges_idx]
+        
+        for edge in relevant_edges:
+            neighbor: GraphNodeClass = edge[1] if edge[0] == next_node else edge[0]
+            edge_vector: np.array = np.array(neighbor.pose[:2]) - np.array(next_node.pose[:2])
+            direction_vector: np.array = np.array(neighbor.pose[:2]) - np.array(new_node.pose[:2])
+
+            similarity: float = np.dot(direction_vector, edge_vector)
+
+            edge_distance: float = self._compute_distance(neighbor.pose[0], neighbor.pose[1],
+                                                          next_node.pose[0], next_node.pose[1])
+            
+            new_distance: float = self._compute_distance(neighbor.pose[0], neighbor.pose[1],
+                                                          new_node.pose[0], new_node.pose[1])
+
+            if similarity > self._similarity_threshold and edge_distance > new_distance:
+                self.updated_graph.edges.append((new_node.id, neighbor.id))
+                
+                direct_edge = (neighbor.id, next_node.id)
+                reverse_edge = (next_node.id, neighbor.id)
+                if direct_edge in self.updated_graph.edges:
+                    self.updated_graph.edges.remove(direct_edge)
+                if reverse_edge in self.updated_graph.edges:
+                    self.updated_graph.edges.remove(reverse_edge)
+
+        return None
 
 
     def _fusion_nodes(self, node: GraphNodeClass, best_match: GraphNodeClass) -> None:
@@ -240,8 +283,8 @@ class MapAligner:
 
         # Draw nodes
         for node in self.updated_graph.nodes.values():
-            y, x, _ = node.pose  # Assuming pose = (y, x, theta)
-            px, py = world_to_pixel(-x, y, map_img.shape, self._world_limits, origin=self._origin)
+            x, y, _ = node.pose  # Assuming pose = (y, x, theta)
+            px, py = world_to_pixel(x, y, map_img.shape, self._world_limits, origin=self._origin)
             cv2.circle(map_img, (px, py), 5, (0, 0, 255), -1)
 
         # Draw edges
@@ -249,10 +292,10 @@ class MapAligner:
             node_1: GraphNodeClass = self.updated_graph.nodes.get(idx_1)
             node_2: GraphNodeClass = self.updated_graph.nodes.get(idx_2)
             if node_1 is not None and node_2 is not None:
-                y1, x1, _ = node_1.pose
-                y2, x2, _ = node_2.pose
-                p1 = world_to_pixel(-x1, y1, map_img.shape, self._world_limits, origin=self._origin)
-                p2 = world_to_pixel(-x2, y2, map_img.shape, self._world_limits, origin=self._origin)
+                x1, y1, _ = node_1.pose
+                x2, y2, _ = node_2.pose
+                p1 = world_to_pixel(x1, y1, map_img.shape, self._world_limits, origin=self._origin)
+                p2 = world_to_pixel(x2, y2, map_img.shape, self._world_limits, origin=self._origin)
                 cv2.line(map_img, p1, p2, (0, 255, 0), 2)  # Green lines for edges
 
         cv2.imwrite(output_path, map_img)
@@ -274,3 +317,19 @@ class MapAligner:
             tuple[float, float, float]: _description_
         """
         return tuple((a + b) / 2 for a, b in zip(pose_1, pose_2))
+    
+
+    def _compute_distance(self, x: float, y: float, prev_x: float, prev_y: float) -> float:
+        """
+        Computes Euclidean distance between two points.
+
+        Args:
+            x (float): current x coordinate.
+            y (float): current y coordinate.
+            prev_x (float): previous x coordinate.
+            prev_y (float): previous y coordinate.
+
+        Returns:
+            float: distance between (x, y) and (prev_x, prev_y).
+        """
+        return np.sqrt((x - prev_x) ** 2 + (y - prev_y) ** 2)

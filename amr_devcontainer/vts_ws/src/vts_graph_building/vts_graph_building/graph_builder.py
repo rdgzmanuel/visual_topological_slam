@@ -688,10 +688,6 @@ class GraphBuilder:
         graph: gtsam.NonlinearFactorGraph = gtsam.NonlinearFactorGraph()
         initial_estimates: gtsam.Values = gtsam.Values()
 
-        # Logging for debugging
-        # self._logger.warn(f"Optimizing poses for nodes: {[(node.id, node.pose) for node in nodes]}")
-        # self._logger.warn(f"Graph edges: {[(n1.id, n2.id) for n1, n2 in graph_edges]}")
-
         # --- Step 1: Add a prior to fix the first node (corridor node) ---
         if len(nodes) > 0:
             fixed_node: GraphNodeClass = nodes[0]
