@@ -42,7 +42,7 @@ class GraphAlignment(Node):
         self._map_aligner: MapAligner = MapAligner(model_name, trajectory, world_limits, origin, map_name)
 
         self._start_directly()
-
+#
 
     def _start_directly(self) -> None:
         first_graph: str = "graph_1.pkl"
@@ -156,7 +156,7 @@ class GraphAlignment(Node):
 
         for i in range(0, len(edges), 2):
             new_graph.edges.append((edges[i], edges[i + 1]))
-        self.get_logger().warn(f"{new_graph.edges}")
+        # self.get_logger().warn(f"{new_graph.edges}")
         return new_graph
 
 

@@ -67,6 +67,7 @@ class GraphBuilder:
 
         # images stitching
         self._min_matches: int = 5
+        self._min_descriptors: int = 2
         self._camera: Camera = Camera(model_name)
         self._image_shape: tuple[int, int, int] | None = None
 
@@ -101,7 +102,7 @@ class GraphBuilder:
         self.current_pose = (x, y, theta)
         self.steps += 1
 
-        # self._plot_node_on_map(self.current_pose, node=False)
+        self._plot_node_on_map(self.current_pose, node=False)
 
         return None
 
@@ -128,7 +129,7 @@ class GraphBuilder:
 
         self.current_pose = (x, y, theta)
         # self._logger.warn("pre plot")
-        # self._plot_node_on_map(self.current_pose, node=False)
+        self._plot_node_on_map(self.current_pose, node=False)
         # self._logger.warn("post plot")
         self.steps += 1
 
@@ -195,7 +196,7 @@ class GraphBuilder:
 
             self.current_pose = (x, y, theta)
 
-        # self._plot_node_on_map(self.current_pose, node=False)
+        self._plot_node_on_map(self.current_pose, node=False)
 
         self._prev_timestamp = timestamp
         self.steps += 1
@@ -403,7 +404,7 @@ class GraphBuilder:
         if self.current_node is None:
             self._node_id += 1
             self.current_node = new_node
-            # self._plot_node_on_map(self.current_node.pose)
+            self._plot_node_on_map(self.current_node.pose)
 
         else:
             closest_neighbor: GraphNodeClass = self._search_closest_neighbor((new_node.pose[0], new_node.pose[1]))
@@ -426,7 +427,7 @@ class GraphBuilder:
             else:
                 self._node_id += 1
                                    
-                # self._logger.warn(f"regular add {self.current_node.id} {new_node.id}")
+                # self._logger.warn(f"add {self.current_node.pose[:2]} {new_node.pose[:2]}")
                 self.graph.append((self.current_node, new_node))
 
                 # Before adding a new edge, check current node's neighbors and edges to see if we can project them
@@ -439,7 +440,7 @@ class GraphBuilder:
                 new_node.neighbors.add(self.current_node)
                 self.current_node.neighbors.add(new_node)
                 self.current_node = new_node
-                # self._plot_node_on_map(self.current_node.pose)
+                self._plot_node_on_map(self.current_node.pose)
                 # self._logger.warn("finish update")
 
         return None
@@ -487,7 +488,7 @@ class GraphBuilder:
         # closest_neighbor.pose = new_pose
         closest_neighbor.image = new_image
         closest_neighbor.visual_features = new_visual_features
-        # self._plot_node_on_map(closest_neighbor.pose)
+        self._plot_node_on_map(closest_neighbor.pose)
 
         if self.current_node != closest_neighbor:
             closest_neighbor.neighbors.add(self.current_node)
@@ -495,7 +496,7 @@ class GraphBuilder:
             new_edge: tuple[GraphNodeClass, GraphNodeClass] = (self.current_node, closest_neighbor)
             if new_edge not in self.graph: # and (new_edge[1], new_edge[0]) not in self.graph:
                 self.graph.append(new_edge)
-                # self._logger.warn(f"Fusion {new_edge[0].id} {new_edge[1].id}")
+                # self._logger.warn(f"Add {new_edge[0].pose[:2]} {new_edge[1].pose[:2]}")
 
         return closest_neighbor
     
@@ -589,7 +590,7 @@ class GraphBuilder:
                     distance: float = self._compute_distance(x, y, projection[0], projection[1])
 
                     if distance < threshold:
-                        # self._logger.warn(f"Rewiring {edge[0].id} {edge[1].id} {node.id}")
+                        # self._logger.warn(f"Add {edge[0].pose[:2]} {node.pose[:2]} {edge[1].pose[:2]}")
                         # rewired edge found
                         self.graph.append((edge[0], node))
                         self.graph.append((node, edge[1]))
@@ -598,12 +599,15 @@ class GraphBuilder:
                         node.neighbors.add(edge[0])
                         node.neighbors.add(edge[1])
                         if edge in self.graph:
+                            # self._logger.warn(f"Removes {edge[0].pose[:2]} {edge[1].pose[:2]}")
                             self.graph.remove(edge)
                             if (edge[1], edge[0]) in self.graph:
+                                self.graph.remove((edge[1], edge[0]))
                                 if edge[1] in edge[0].neighbors:
                                     edge[0].neighbors.remove(edge[1])
                                 if edge[0] in edge[1].neighbors:
                                     edge[1].neighbors.remove(edge[0])
+                                
 
 
     def _get_projections(self, node: GraphNodeClass,
@@ -733,15 +737,15 @@ class GraphBuilder:
         """
         map_folder: str = os.path.join("images/maps", self._map_name)
         output_path: str = self._trajectory + "_nodes.png"
-        output_path = os.path.join("images/running_maps", output_path)
+        output_path = os.path.join(f"images/running_maps/{self._map_name[:-4]}", output_path)
 
         if self.steps != 0:
             map_folder = output_path
 
         map_img = cv2.imread(map_folder)
 
-        y, x, _ = pose  # Ignore theta for now
-        px, py = self.world_to_pixel(-x, y, map_img.shape, self._world_limits, self._origin)
+        x, y, _ = pose  # Ignore theta for now
+        px, py = self.world_to_pixel(x, y, map_img.shape, self._world_limits, self._origin)
         # self._logger.warn("post world")
         if node:
             cv2.circle(map_img, (px, py), 5, (0, 0, 255), -1)
@@ -790,18 +794,18 @@ class GraphBuilder:
         """
         map_folder: str = os.path.join("images/maps", self._map_name)
         file_name: str = "final_" + self._trajectory + ".png"
-        output_path: str = os.path.join("images/final_maps", file_name)
+        output_path: str = os.path.join(f"images/adjusted_maps/{self._map_name[:-4]}", file_name)
 
         map_img = cv2.imread(map_folder)
 
         for _, pose, _ in self._images_pose:
-            y, x, _ = pose
-            px, py = self.world_to_pixel(-x, y, map_img.shape, self._world_limits, origin=self._origin)
+            x, y, _ = pose
+            px, py = self.world_to_pixel(x, y, map_img.shape, self._world_limits, origin=self._origin)
             cv2.circle(map_img, (px, py), 1, (255, 0, 0), -1)
 
         for node, _ in self.graph:
-            y, x, _ = node.pose
-            px, py = self.world_to_pixel(-x, y, map_img.shape, self._world_limits, origin=self._origin)
+            x, y, _ = node.pose
+            px, py = self.world_to_pixel(x, y, map_img.shape, self._world_limits, origin=self._origin)
             cv2.circle(map_img, (px, py), 5, (0, 0, 255), -1)
 
         cv2.imwrite(output_path, map_img)
@@ -821,17 +825,17 @@ class GraphBuilder:
 
         # Draw nodes
         for node, _ in self.graph:
-            y, x, _ = node.pose  # Assuming pose = (y, x, theta)
-            px, py = world_to_pixel(-x, y, map_img.shape, self._world_limits, origin=self._origin)
+            x, y, _ = node.pose  # Assuming pose = (y, x, theta)
+            px, py = world_to_pixel(x, y, map_img.shape, self._world_limits, origin=self._origin)
             cv2.circle(map_img, (px, py), 5, (0, 0, 255), -1)
 
         # Draw edges
         for node_1, node_2 in self.graph:
             if node_1 is not None and node_2 is not None:
-                y1, x1, _ = node_1.pose
-                y2, x2, _ = node_2.pose
-                p1 = world_to_pixel(-x1, y1, map_img.shape, self._world_limits, origin=self._origin)
-                p2 = world_to_pixel(-x2, y2, map_img.shape, self._world_limits, origin=self._origin)
+                x1, y1, _ = node_1.pose
+                x2, y2, _ = node_2.pose
+                p1 = world_to_pixel(x1, y1, map_img.shape, self._world_limits, origin=self._origin)
+                p2 = world_to_pixel(x2, y2, map_img.shape, self._world_limits, origin=self._origin)
                 cv2.line(map_img, p1, p2, (0, 255, 0), 2)  # Green lines for edges
 
         cv2.imwrite(output_path, map_img)
@@ -869,41 +873,43 @@ class GraphBuilder:
         search_params: dict[str, int] = {"checks": 50}
         flann: cv2.FlannBasedMatcher = cv2.FlannBasedMatcher(index_params, search_params)
 
-        matches: list[list[cv2.DMatch]] = flann.knnMatch(des1, des2, k=2)
 
-        # Lowe's ratio test to keep good matches
-        good_matches: list[cv2.DMatch] = [
-            m for m, n in matches if m.distance < 0.7 * n.distance
-        ]
+        if des1 is None or des2 is None or len(des1) < 2 or len(des2) < 2:
+            stitched_image: np.ndarray = self.concat_images(image_1, image_2)
+        else:
+            matches: list[list[cv2.DMatch]] = flann.knnMatch(des1, des2, k=self._min_descriptors)
 
-        # self._logger.warn("pre if")
+            # Lowe's ratio test to keep good matches
+            good_matches: list[cv2.DMatch] = [
+                m for m, n in matches if m.distance < 0.7 * n.distance
+            ]
 
-        if len(good_matches) > min_matches:
-            src_pts: np.ndarray = np.float32([kp1[m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
-            dst_pts: np.ndarray = np.float32([kp2[m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+            if len(good_matches) > min_matches:
+                src_pts: np.ndarray = np.float32([kp1[m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+                dst_pts: np.ndarray = np.float32([kp2[m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
 
-            # Compute homography
-            H, _ = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
+                # Compute homography
+                H, _ = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
 
-            # Warp first image to align with the second
-            height, width, _ = image_2.shape
-            if H is not None and H.shape == (3, 3):
-                H = H.astype(np.float32)  # or np.float64
-                warped_img1 = cv2.warpPerspective(image_1, H, (width * 2, height))
-                # Place second image on the stitched result
-                warped_img1[0:height, 0:width] = image_2
+                # Warp first image to align with the second
+                height, width, _ = image_2.shape
+                if H is not None and H.shape == (3, 3):
+                    H = H.astype(np.float32)  # or np.float64
+                    warped_img1 = cv2.warpPerspective(image_1, H, (width * 2, height))
+                    # Place second image on the stitched result
+                    warped_img1[0:height, 0:width] = image_2
 
-                # Convert to grayscale and find non-zero regions for blending
-                gray_warped: np.ndarray = cv2.cvtColor(warped_img1, cv2.COLOR_BGR2GRAY)
-                _, mask = cv2.threshold(gray_warped, 1, 255, cv2.THRESH_BINARY)
-                # self._logger.warn("pre block")
-                # Crop the stitched image
-                stitched_image: np.ndarray = self.crop_black_borders(warped_img1, mask)
+                    # Convert to grayscale and find non-zero regions for blending
+                    gray_warped: np.ndarray = cv2.cvtColor(warped_img1, cv2.COLOR_BGR2GRAY)
+                    _, mask = cv2.threshold(gray_warped, 1, 255, cv2.THRESH_BINARY)
+                    # self._logger.warn("pre block")
+                    # Crop the stitched image
+                    stitched_image = self.crop_black_borders(warped_img1, mask)
+                else:
+                    stitched_image = self.concat_images(image_1, image_2)
+            
             else:
                 stitched_image = self.concat_images(image_1, image_2)
-            
-        else:
-            stitched_image = self.concat_images(image_1, image_2)
 
         return stitched_image
     

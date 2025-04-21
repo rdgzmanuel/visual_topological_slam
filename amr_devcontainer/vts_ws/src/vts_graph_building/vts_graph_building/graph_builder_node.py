@@ -21,10 +21,10 @@ class GraphBuilderNode(Node):
         self.declare_parameter("n", 30)
         self._n: int = self.get_parameter("n").get_parameter_value().integer_value
 
-        self.declare_parameter("gamma_proportion", 0.4) # lower bound for peaks 0.5
+        self.declare_parameter("gamma_proportion", 0.4) # lower bound for peaks 0.5 / 0.4
         self._gamma_proportion: float = self.get_parameter("gamma_proportion").get_parameter_value().double_value
 
-        self.declare_parameter("delta_proportion", 0.09) # minimum difference of the a. c. between consecutive peaks 0.11
+        self.declare_parameter("delta_proportion", 0.09) # minimum difference of the a. c. between consecutive peaks 0.11 / 0.09
         self._delta_proportion: float = self.get_parameter("delta_proportion").get_parameter_value().double_value
 
         self.declare_parameter("distance_threshold", 3.0)

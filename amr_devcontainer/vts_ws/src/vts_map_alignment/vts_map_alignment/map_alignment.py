@@ -48,12 +48,12 @@ class MapAligner:
             graph_1 (Graph): The base graph to copy and expand.
             graph_2 (Graph): The secondary graph whose nodes will be integrated.
         """
-        self.updated_graph: Graph = copy.deepcopy(graph_1)
-        self.updated_graph.node_id = max(self.updated_graph.nodes.keys()) + 1
-        self._new_update_graph(graph_2)
+        self.updated_graph: Graph = copy.deepcopy(graph_2)
+        # self.updated_graph.node_id = max(self.updated_graph.nodes.keys()) + 1
+        # self._update_graph(graph_2)
 
 
-    def _new_update_graph(self, lookup_graph: Graph) -> None:
+    def _update_graph(self, lookup_graph: Graph) -> None:
         """
         Updates `self.updated_graph` with nodes and edges from a second graph.
 
@@ -276,8 +276,8 @@ class MapAligner:
         Generates final path image, drawing both node positions and edges.
         """
         map_folder: str = os.path.join("images/maps", self._map_name)
-        file_name: str = "final_" + self._trajectory + ".png"
-        output_path: str = os.path.join("images/final_aligned_maps", file_name)
+        file_name: str = self._trajectory + ".png"
+        output_path: str = os.path.join(f"images/final_aligned_maps/{self._map_name[:-4]}", file_name)
 
         map_img = cv2.imread(map_folder)
 
