@@ -20,19 +20,21 @@ def generate_launch_description():
     # start_2: tuple[float, float, float] = (0.46, -0.02, -0.11)
     # trajectory_2: str = "cold-freiburg_part_b_seq3_cloudy3"
 
-    lab: str = "saarbruecken_a"
-    start_1: tuple[float, float, float] = (0.19, 0.01, 0.04)
-    trajectory_1: str = "cold-saarbruecken_part_a_seq2_cloudy1"
+    # lab: str = "saarbruecken_a"
 
-    start_2: tuple[float, float, float] = (0.27, 0.03, 0.07)
-    trajectory_2: str = "cold-saarbruecken_part_a_seq2_night2"
+    # start_1: tuple[float, float, float] = (0.27, 0.03, 0.07)
+    # trajectory_1: str = "cold-saarbruecken_part_a_seq2_night2"
 
-    # lab: str = "saarbruecken_ext"
-    # start_1: tuple[float, float, float] = (0.19, 0.01, 0.04)
-    # trajectory_1: str = "cold-saarbruecken_part_b_seq4_sunny1"
+    # start_2: tuple[float, float, float] = (0.19, 0.01, 0.04)
+    # trajectory_2: str = "cold-saarbruecken_part_a_seq2_cloudy1"
 
-    # start_2: tuple[float, float, float] = (0.2, 0.00, 0.00)
-    # trajectory_2: str = "cold-saarbruecken_part_b_seq4_cloudy1"
+    lab: str = "saarbruecken_ext"
+    start_1: tuple[float, float, float] = (0.2, 0.00, 0.00)
+    trajectory_1: str = "cold-saarbruecken_part_b_seq4_cloudy1"
+
+    start_2: tuple[float, float, float] = (0.19, 0.01, 0.04)
+    trajectory_2: str = "cold-saarbruecken_part_b_seq4_sunny1"
+
 
     # lab: str = "ljubljana"
     # start: tuple[float, float, float] = (1.43, -5.61, 1.89)
@@ -100,7 +102,7 @@ def generate_launch_description():
                 executable="graph_alignment",
                 output="screen",
                 arguments=["--ros-args", "--log-level", "WARN"],
-                parameters=[{"trajectory": f"{trajectory_2}", "model_name": model_name,
+                parameters=[{"trajectory": f"{trajectory_1}__{trajectory_2}", "model_name": model_name,
                              "world_limits": settings[lab]["world_limits"], "origin": settings[lab]["origin"],
                              "map_name": settings[lab]["map_name"]}]),
         ]

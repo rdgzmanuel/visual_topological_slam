@@ -21,13 +21,13 @@ class GraphBuilderNode(Node):
         self.declare_parameter("n", 30)
         self._n: int = self.get_parameter("n").get_parameter_value().integer_value
 
-        self.declare_parameter("gamma_proportion", 0.4) # lower bound for peaks 0.5 / 0.4
+        self.declare_parameter("gamma_proportion", 0.4) # lower bound for peaks 0.5   0.4 fE
         self._gamma_proportion: float = self.get_parameter("gamma_proportion").get_parameter_value().double_value
 
-        self.declare_parameter("delta_proportion", 0.09) # minimum difference of the a. c. between consecutive peaks 0.11 / 0.09
+        self.declare_parameter("delta_proportion", 0.09) # minimum difference of the a. c. between consecutive peaks 0.11 / 0.09  fE
         self._delta_proportion: float = self.get_parameter("delta_proportion").get_parameter_value().double_value
 
-        self.declare_parameter("distance_threshold", 3.0)
+        self.declare_parameter("distance_threshold", 3.5) # 3.5 fA   2.0 fE
         self._distance_threshold: float = self.get_parameter("distance_threshold").get_parameter_value().double_value
 
         self.declare_parameter("start_1", (0.0, 0.0, 0.0))
@@ -101,20 +101,16 @@ class GraphBuilderNode(Node):
             camera_msg (ImageTensor): Camera message containing tensor and shape data.
         """
 
-        # self.get_logger().warn("Receives message")
         self._last_image_time = time.time()
 
         prev_index: int = 0
         data: list[float] = camera_msg.data
         image_name: str = camera_msg.image_name
 
-        # self.get_logger().warn(f"name {image_name}")
 
-        self.graph_builder.new_upgrade_pose(image_name)
-        # self.get_logger().warn("updates pose")
+        self.graph_builder.new_update_pose(image_name)
         array_data: np.ndarray = np.array(data).astype("float32")
         self.graph_builder.update_matrices(array_data)
-        # self.get_logger().warn("updates matrices")
 
         if len(self.graph_builder.window_images) > 1:
             lambda_2, valley_idx = self.graph_builder.look_for_valley()
@@ -122,6 +118,9 @@ class GraphBuilderNode(Node):
             if valley_idx not in [0, prev_index - 1]:
                 prev_index = valley_idx
                 self.graph_builder.update_graph()
+            
+            elif len(self.graph_builder.graph) > 1:
+                self.graph_builder.check_pose()
 
 
     def _publish_graph(self) -> None:

@@ -9,7 +9,7 @@ from scipy.spatial.distance import cosine
 
 from vts_graph_building.node import GraphNodeClass
 from vts_map_alignment.graph_class import Graph
-from vts_graph_building.graph_builder import stitch_images, crop_black_borders, concat_images,\
+from vts_graph_building.graph_builder import concat_images ,\
     process_stitched_image, world_to_pixel
 from vts_camera.camera import Camera
 
@@ -27,15 +27,15 @@ class MapAligner:
         self._map_name: str = map_name
 
         # Neighbor finding
-        self._pose_weight: float = 0.75
-        self._threshold: float = 1.5
+        self._pose_weight: float = 0.8
+        self._threshold: float = 3.0
 
         # Image stitching
         self._min_matches: int = 10
         self._camera: Camera = Camera(model_name)
 
         # Map alignment
-        self._similarity_threshold: float = 0.65
+        self._similarity_threshold: float = 0.9
 
         self._logger = rclpy.logging.get_logger('MapAlignment')
 
@@ -48,9 +48,9 @@ class MapAligner:
             graph_1 (Graph): The base graph to copy and expand.
             graph_2 (Graph): The secondary graph whose nodes will be integrated.
         """
-        self.updated_graph: Graph = copy.deepcopy(graph_2)
-        # self.updated_graph.node_id = max(self.updated_graph.nodes.keys()) + 1
-        # self._update_graph(graph_2)
+        self.updated_graph: Graph = copy.deepcopy(graph_1)
+        self.updated_graph.node_id = max(self.updated_graph.nodes.keys()) + 1
+        self._update_graph(graph_2)
 
 
     def _update_graph(self, lookup_graph: Graph) -> None:
@@ -70,7 +70,6 @@ class MapAligner:
                 self._fusion_nodes(node, best_match)
                 self.updated_graph.current_node = best_match
             else:
-                
                 new_node = copy.deepcopy(node)
                 new_node.id = self.updated_graph.node_id
 
@@ -99,51 +98,64 @@ class MapAligner:
         if next_node is not None:
             self.updated_graph.edges.append((new_node.id, next_node.id))
             # Remove direct connection from best_match to next_node if it exists
-            
+
             direct_edge = (best_match.id, next_node.id)
             reverse_edge = (next_node.id, best_match.id)
             if direct_edge in self.updated_graph.edges:
                 self.updated_graph.edges.remove(direct_edge)
             if reverse_edge in self.updated_graph.edges:
                 self.updated_graph.edges.remove(reverse_edge)
-            
+
             self._check_next_node_neighbors(next_node, new_node)
-        
+
         return None
 
 
     def _find_next_node(self, new_edge: tuple[GraphNodeClass, GraphNodeClass]) -> GraphNodeClass | None:
         """
         Finds the neighbor of the current node that most closely aligns
-        (via dot product) with the direction of the new edge.
+        (via cosine similarity) with the direction of the new edge.
 
         Args:
-            new_edge (tuple[GraphNodeClass, GraphNodeClass]): Tuple of (current_node, new_node)
+            new_edge (tuple[GraphNodeClass, GraphNodeClass]): Tuple of (previous_match, new_node)
 
         Returns:
             Optional[GraphNodeClass]: Neighbor node to connect through, or None if none match well.
         """
         previous_match, new_node = new_edge
-        direction_vector: np.array = np.array(new_node.pose[:2]) - np.array(previous_match.pose[:2])
+        direction_vector: np.ndarray = np.array(new_node.pose[:2]) - np.array(previous_match.pose[:2])
+
+        direction_norm = np.linalg.norm(direction_vector)
+        if direction_norm == 0:
+            return None
+        direction_vector /= direction_norm
 
         max_similarity: float = float("-inf")
         best_match: None | GraphNodeClass = None
 
         relevant_edges_idx: list[tuple[int, int]] = [e for e in self.updated_graph.edges if previous_match.id in e]
-        relevant_edges: list[tuple[GraphNodeClass, GraphNodeClass]] = [(self.updated_graph.nodes[node_idx], self.updated_graph.nodes[adj_idx])
-                                                                       for node_idx, adj_idx in relevant_edges_idx]
+        relevant_edges: list[tuple[GraphNodeClass, GraphNodeClass]] = [
+            (self.updated_graph.nodes[node_idx], self.updated_graph.nodes[adj_idx])
+            for node_idx, adj_idx in relevant_edges_idx
+        ]
 
         for edge in relevant_edges:
             neighbor: GraphNodeClass = edge[1] if edge[0] == previous_match else edge[0]
-            edge_vector: np.array = np.array(neighbor.pose[:2]) - np.array(previous_match.pose[:2])
+            edge_vector: np.ndarray = np.array(neighbor.pose[:2]) - np.array(previous_match.pose[:2])
 
-            similarity: float = np.dot(direction_vector, edge_vector)
+            edge_norm = np.linalg.norm(edge_vector)
+            if edge_norm == 0:
+                continue
+            edge_vector /= edge_norm
+
+            similarity: float = np.dot(direction_vector, edge_vector) # maximum 1
 
             if similarity > self._similarity_threshold and similarity > max_similarity:
                 max_similarity = similarity
                 best_match = neighbor
 
         return best_match
+
 
 
     def _search_best_match(self, node: GraphNodeClass, k: int = 3) -> tuple[GraphNodeClass, float]:
@@ -239,7 +251,8 @@ class MapAligner:
         """
 
         new_pose: tuple[float, float, float] = self._average_pose(node.pose, best_match.pose)
-        new_image: np.ndarray = stitch_images(node.image, best_match.image,
+        self._logger.warn(f"Node {node.image.shape}, match {best_match.image.shape}")
+        new_image: np.ndarray = self.stitch_images(node.image, best_match.image,
                                                 min_matches=self._min_matches)
         tensor_image: torch.Tensor = process_stitched_image(new_image)
         new_visual_features: np.ndarray = self._extract_features(tensor_image)
@@ -283,8 +296,8 @@ class MapAligner:
 
         # Draw nodes
         for node in self.updated_graph.nodes.values():
-            x, y, _ = node.pose  # Assuming pose = (y, x, theta)
-            px, py = world_to_pixel(x, y, map_img.shape, self._world_limits, origin=self._origin)
+            y, x, _ = node.pose  # Assuming pose = (y, x, theta)
+            px, py = world_to_pixel(-x, y, map_img.shape, self._world_limits, origin=self._origin)
             cv2.circle(map_img, (px, py), 5, (0, 0, 255), -1)
 
         # Draw edges
@@ -292,10 +305,10 @@ class MapAligner:
             node_1: GraphNodeClass = self.updated_graph.nodes.get(idx_1)
             node_2: GraphNodeClass = self.updated_graph.nodes.get(idx_2)
             if node_1 is not None and node_2 is not None:
-                x1, y1, _ = node_1.pose
-                x2, y2, _ = node_2.pose
-                p1 = world_to_pixel(x1, y1, map_img.shape, self._world_limits, origin=self._origin)
-                p2 = world_to_pixel(x2, y2, map_img.shape, self._world_limits, origin=self._origin)
+                y1, x1, _ = node_1.pose
+                y2, x2, _ = node_2.pose
+                p1 = world_to_pixel(-x1, y1, map_img.shape, self._world_limits, origin=self._origin)
+                p2 = world_to_pixel(-x2, y2, map_img.shape, self._world_limits, origin=self._origin)
                 cv2.line(map_img, p1, p2, (0, 255, 0), 2)  # Green lines for edges
 
         cv2.imwrite(output_path, map_img)
@@ -333,3 +346,91 @@ class MapAligner:
             float: distance between (x, y) and (prev_x, prev_y).
         """
         return np.sqrt((x - prev_x) ** 2 + (y - prev_y) ** 2)
+    
+
+    def stitch_images(self, image_1: np.ndarray, image_2: np.ndarray, min_matches: int = 5) -> np.ndarray:
+        """
+        Stitches two images together using feature matching and homography.
+
+        Args:
+            img1 (str): first input image path.
+            img2 (str): second input image (BGR format).
+
+        Returns:
+            np.ndarray: stitched image if successful, otherwise concated images.
+        """
+
+        gray_1: np.ndarray = cv2.cvtColor(image_1, cv2.COLOR_BGR2GRAY)
+        gray_2: np.ndarray = cv2.cvtColor(image_2, cv2.COLOR_BGR2GRAY)
+
+        sift = cv2.SIFT_create()
+        kp1: list[cv2.KeyPoint]
+        kp2: list[cv2.KeyPoint]
+        des1: np.ndarray
+        des2: np.ndarray
+        kp1, des1 = sift.detectAndCompute(gray_1, None)
+        kp2, des2 = sift.detectAndCompute(gray_2, None)
+
+        # self._logger.warn("pre flann")
+
+        # FLANN based feature matching
+        index_params: dict[str, int] = {"algorithm": 1, "trees": 5}
+        search_params: dict[str, int] = {"checks": 50}
+        flann: cv2.FlannBasedMatcher = cv2.FlannBasedMatcher(index_params, search_params)
+
+
+        if des1 is None or des2 is None or len(des1) <= 2 or len(des2) <= 2:
+            stitched_image: np.ndarray = concat_images(image_1, image_2)
+        else:
+            
+            matches: list[list[cv2.DMatch]] = flann.knnMatch(des1, des2, k=2)
+
+            # Lowe's ratio test to keep good matches
+            good_matches: list[cv2.DMatch] = [
+                m for m, n in matches if len(matches) >= 2 and m.distance < 0.7 * n.distance
+            ]
+
+            if len(good_matches) > min_matches:
+                src_pts: np.ndarray = np.float32([kp1[m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+                dst_pts: np.ndarray = np.float32([kp2[m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+
+                # Compute homography
+                H, _ = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
+
+                # Warp first image to align with the second
+                height, width, _ = image_2.shape
+                if H is not None and H.shape == (3, 3):
+                    H = H.astype(np.float32)  # or np.float64
+                    warped_img1 = cv2.warpPerspective(image_1, H, (width * 2, height))
+                    # Place second image on the stitched result
+                    warped_img1[0:height, 0:width] = image_2
+
+                    # Convert to grayscale and find non-zero regions for blending
+                    gray_warped: np.ndarray = cv2.cvtColor(warped_img1, cv2.COLOR_BGR2GRAY)
+                    _, mask = cv2.threshold(gray_warped, 1, 255, cv2.THRESH_BINARY)
+                    # self._logger.warn("pre block")
+                    # Crop the stitched image
+                    stitched_image = self.crop_black_borders(warped_img1, mask)
+                else:
+                    stitched_image = concat_images(image_1, image_2)
+            
+            else:
+                stitched_image = concat_images(image_1, image_2)
+
+        return stitched_image
+    
+
+    def crop_black_borders(self, image: np.ndarray, mask: np.ndarray) -> np.ndarray:
+        """
+        Crops black borders from an image using a mask.
+
+        Args:
+            image (np.ndarray): stitched image with potential black borders.
+            mask (np.ndarray): binary mask indicating valid regions.
+
+        Returns:
+            np.ndarray: cropped image without black borders.
+        """
+        coords = cv2.findNonZero(mask)
+        x, y, w, h = cv2.boundingRect(coords)
+        return image[y:y+h, x:x+w]

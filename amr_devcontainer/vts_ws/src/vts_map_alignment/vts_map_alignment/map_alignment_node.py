@@ -42,7 +42,7 @@ class GraphAlignment(Node):
         self._map_aligner: MapAligner = MapAligner(model_name, trajectory, world_limits, origin, map_name)
 
         self._start_directly()
-#
+
 
     def _start_directly(self) -> None:
         first_graph: str = "graph_1.pkl"
@@ -143,19 +143,31 @@ class GraphAlignment(Node):
             if np.isnan(node.pose).any() or np.isinf(node.pose).any():
                 self.get_logger().error(f"Node {node.id} has invalid pose!")
 
-            image: np.ndarray = np.array(node.image.flatten().tolist()).reshape(list(node.image.shape)).astype(np.uint8)
-            pose: tuple[float, float] = tuple(node.pose)
-            features: np.ndarray = np.array(node.visual_features.tolist())
-            id: int = node.id
-
-            new_node: GraphNodeClass = GraphNodeClass(id=id, pose=pose, visual_features=features, image=image)
-            new_graph.nodes[id] = new_node
-
             edges.append(node.id)
             edges.append(adjacent.id)
 
+            id: int = node.id
+            if id not in new_graph.nodes:
+                image: np.ndarray = np.array(node.image.flatten().tolist()).reshape(list(node.image.shape)).astype(np.uint8)
+                pose: tuple[float, float] = tuple(node.pose)
+                features: np.ndarray = np.array(node.visual_features.tolist())
+                new_node: GraphNodeClass = GraphNodeClass(id=id, pose=pose, visual_features=features, image=image)
+                new_graph.nodes[id] = new_node
+
+            id = adjacent.id
+            if id not in new_graph.nodes:
+                image: np.ndarray = np.array(adjacent.image.flatten().tolist()).reshape(list(adjacent.image.shape)).astype(np.uint8)
+                pose: tuple[float, float] = tuple(adjacent.pose)
+                features: np.ndarray = np.array(adjacent.visual_features.tolist())
+                new_node: GraphNodeClass = GraphNodeClass(id=id, pose=pose, visual_features=features, image=image)
+                new_graph.nodes[id] = new_node
+
         for i in range(0, len(edges), 2):
             new_graph.edges.append((edges[i], edges[i + 1]))
+        final_edge: tuple[int, int] = (edges[-2], edges[-1])
+
+        if final_edge not in new_graph.edges:
+            new_graph.edges.append(final_edge)
         # self.get_logger().warn(f"{new_graph.edges}")
         return new_graph
 
