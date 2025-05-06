@@ -21,13 +21,13 @@ class GraphBuilderNode(Node):
         self.declare_parameter("n", 30)
         self._n: int = self.get_parameter("n").get_parameter_value().integer_value
 
-        self.declare_parameter("gamma_proportion", 0.4) # lower bound for peaks 0.5   0.4 fE
+        self.declare_parameter("gamma_proportion", 0.4) # lower bound for peaks 0.5   0.4 fE sE
         self._gamma_proportion: float = self.get_parameter("gamma_proportion").get_parameter_value().double_value
 
-        self.declare_parameter("delta_proportion", 0.09) # minimum difference of the a. c. between consecutive peaks 0.11 / 0.09  fE
+        self.declare_parameter("delta_proportion", 0.09) # minimum difference of the a. c. between consecutive peaks 0.11 / 0.09  fE sE
         self._delta_proportion: float = self.get_parameter("delta_proportion").get_parameter_value().double_value
 
-        self.declare_parameter("distance_threshold", 3.5) # 3.5 fA   2.0 fE
+        self.declare_parameter("distance_threshold", 4.0) # 3.5 fA   2.0 fE  4.0 sE
         self._distance_threshold: float = self.get_parameter("distance_threshold").get_parameter_value().double_value
 
         self.declare_parameter("start_1", (0.0, 0.0, 0.0))
@@ -54,6 +54,9 @@ class GraphBuilderNode(Node):
         self.declare_parameter("model_name", "default_value")
         self._model_name: str = self.get_parameter("model_name").get_parameter_value().string_value
 
+        self.declare_parameter("ext_rewiring", False)
+        self._ext_rewiring: float = self.get_parameter("ext_rewiring").get_parameter_value().bool_value
+
         self.declare_parameter("origin", (0, 0))
         self._origin: tuple[int, int] = tuple(self.get_parameter("origin").\
                                         get_parameter_value().integer_array_value.tolist())
@@ -69,7 +72,7 @@ class GraphBuilderNode(Node):
         self._graph_publisher = self.create_publisher(FullGraph, "/graph_alignment", 10)
 
         self.graph_builder: GraphBuilder = self._create_graph_builder(trajectory=self._trajectory_1,
-                                                                      start=self._start_1)
+                                                                      start=self._start_1,)
 
         self._last_image_time = time.time()
         self._timeout_seconds: int = 20
@@ -89,7 +92,7 @@ class GraphBuilderNode(Node):
         # self.get_logger().warn("tryin to create builder")
         graph_builder = GraphBuilder(self._n, self._gamma_proportion, self._delta_proportion,
                             self._distance_threshold, start, self._world_limits, self._map_name,
-                            self._origin, self._weights, trajectory, self._model_name)
+                            self._origin, self._weights, trajectory, self._model_name, self._ext_rewiring)
         return graph_builder
 
 
@@ -106,7 +109,6 @@ class GraphBuilderNode(Node):
         prev_index: int = 0
         data: list[float] = camera_msg.data
         image_name: str = camera_msg.image_name
-
 
         self.graph_builder.new_update_pose(image_name)
         array_data: np.ndarray = np.array(data).astype("float32")

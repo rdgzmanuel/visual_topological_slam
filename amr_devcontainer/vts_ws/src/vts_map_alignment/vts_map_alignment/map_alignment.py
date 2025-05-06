@@ -240,7 +240,7 @@ class MapAligner:
 
     def _fusion_nodes(self, node: GraphNodeClass, best_match: GraphNodeClass) -> None:
         """
-        
+
 
         Args:
             node_1 (GraphNodeClass): Node coming from graph 2.
@@ -251,7 +251,6 @@ class MapAligner:
         """
 
         new_pose: tuple[float, float, float] = self._average_pose(node.pose, best_match.pose)
-        self._logger.warn(f"Node {node.image.shape}, match {best_match.image.shape}")
         new_image: np.ndarray = self.stitch_images(node.image, best_match.image,
                                                 min_matches=self._min_matches)
         tensor_image: torch.Tensor = process_stitched_image(new_image)

@@ -17,7 +17,7 @@ class GraphBuilder:
     def __init__(self, n: int, gamma_proportion: float, delta_proportion: float, distance_threshold: float,
                  initial_pose: tuple[float, float, float], world_limits: tuple[float, float, float, float],
                  map_name: str, origin: tuple[int, int], weights: tuple[float], trajectory: str,
-                 model_name: str):
+                 model_name: str, ext_rewiring: bool):
         """
         Constructor of the GraphBuilder class. Contains relevant graph information
         and hyperparameters.
@@ -75,8 +75,9 @@ class GraphBuilder:
         self._image_shape: tuple[int, int, int] | None = None
 
         # rewiring
-        self._rewiring_threshold: float = 4.0 # 3.0 fA 1.25 sA   4.0 fE
-        self._external_rewiring_threshold: float = 3.5 # 2.5 fA 1.0 sA   3.5 fE
+        self._ext_rewiring: bool = ext_rewiring
+        self._rewiring_threshold: float = 4.25 # 3.0 fA 1.25 sA   4.0 fE  4.25 sE
+        self._external_rewiring_threshold: float = 4.0 # 2.5 fA 1.0 sA   3.5 fE   4.0 sE
         self._hard_threshold: float = 0.7 # 0.7 fAE  0.55 sA 
 
         self._logger = rclpy.logging.get_logger('GraphBuilder')
@@ -413,7 +414,7 @@ class GraphBuilder:
 
         if self.current_node is None:
             self._node_id += 1
-            # new_node.update_semantics()
+            new_node.update_semantics()
             self.current_node = new_node
             # self._logger.warn(f"NEW CURRENT INITIAL UPDATE {self.current_node.pose}")
             self._plot_node_on_map(self.current_node.pose)
@@ -441,18 +442,19 @@ class GraphBuilder:
 
             else:
                 self._node_id += 1
-                # new_node.update_semantics()
+                new_node.update_semantics()
                                    
                 # self._logger.warn(f"add {self.current_node.pose[:2]} {new_node.pose[:2]}")
                 self.graph.append((self.current_node, new_node))
 
-                # Before adding a new node, check current node's neighbors edges to see if we can project it
-                relevant_edges: list[tuple[GraphNodeClass, GraphNodeClass]] = [edge for edge in self.graph if self.current_node in edge] 
-                self._rewire_graph([new_node], relevant_edges, self._external_rewiring_threshold)
+                if self._ext_rewiring:
+                    # Before adding a new node, check current node's neighbors edges to see if we can project it
+                    relevant_edges: list[tuple[GraphNodeClass, GraphNodeClass]] = [edge for edge in self.graph if self.current_node in edge] 
+                    self._rewire_graph([new_node], relevant_edges, self._external_rewiring_threshold)
 
-                # Before adding a new edge, check current node's neighbors to see if we can project them
-                relevant_nodes: list[GraphNodeClass] = list(self.current_node.neighbors)
-                self._rewire_graph(relevant_nodes, [(self.current_node, new_node)], self._external_rewiring_threshold)
+                    # Before adding a new edge, check current node's neighbors to see if we can project them
+                    relevant_nodes: list[GraphNodeClass] = list(self.current_node.neighbors)
+                    self._rewire_graph(relevant_nodes, [(self.current_node, new_node)], self._external_rewiring_threshold)
 
                 new_node.neighbors.add(self.current_node)
                 self.current_node.neighbors.add(new_node)
@@ -514,7 +516,7 @@ class GraphBuilder:
         closest_neighbor.visual_features = new_visual_features
         self._plot_node_on_map(closest_neighbor.pose)
 
-        # closest_neighbor.update_semantics()
+        closest_neighbor.update_semantics()
 
         if self.current_node != closest_neighbor:
             closest_neighbor.neighbors.add(self.current_node)
@@ -783,9 +785,9 @@ class GraphBuilder:
             projection (tuple[float, float]): _description_
         """
 
-        new_projection: tuple[float, float, float] = (projection[0],
+        new_projection_pose: tuple[float, float, float] = (projection[0],
                                                       projection[1], self._normalize_angle(node.pose[2] + np.pi))
-        new_pose: tuple[float, float, float] = self._average_pose(node.pose, new_projection)
+        new_pose: tuple[float, float, float] = self._average_pose(node.pose, new_projection_pose)
 
         node.pose = new_pose
 
@@ -799,6 +801,8 @@ class GraphBuilder:
 
         node.image = new_image
         node.visual_features = new_visual_features
+
+        node.update_semantics()
 
         return None
 
@@ -849,7 +853,16 @@ class GraphBuilder:
                     self.graph.append(new_edge)
                 
                 self.current_node = match
-                # self._logger.warn(f"NEW CURRENT CHECK POSE {self.current_node.pose}")
+
+                new_image: np.ndarray = self.stitch_images(self.current_node.image, self._current_image,
+                                            min_matches=self._min_matches)
+                new_image = cv2.resize(new_image, (self._image_shape[1], self._image_shape[0]))
+                tensor_image: torch.Tensor = process_stitched_image(new_image)
+                new_visual_features: np.ndarray = self._extract_features(tensor_image)
+
+                self.current_node.image = new_image
+                self.current_node.visual_features = new_visual_features
+                self.current_node.update_semantics()
 
         return None
 

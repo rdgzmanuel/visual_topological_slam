@@ -72,9 +72,9 @@ class GraphNodeClass:
         inputs = self._clip_tokenizer([context_phrase], return_tensors="pt", padding=True).to(self._device)
         with torch.no_grad():
             outputs = self._clip_text_model(**inputs)
-            # mean of last hidden states to get a text embedding
+            
             embeddings: torch.Tensor = outputs.last_hidden_state.mean(dim=1)
-            embeddings = embeddings / embeddings.norm(dim=-1, keepdim=True)
+            embeddings = embeddings / embeddings.norm(dim=-1, keepdim=True) # shape 512
 
         return embeddings.cpu().numpy().squeeze()
 
