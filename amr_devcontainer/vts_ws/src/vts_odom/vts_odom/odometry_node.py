@@ -3,6 +3,7 @@ import os
 from rclpy.node import Node
 
 from vts_msgs.msg import CustomOdometry
+from geometry_msgs.msg import Quaternion
 from vts_odom.odometry import OdometryClass
 
 class OdometryNode(Node):

@@ -8,6 +8,7 @@ from torchvision import transforms
 from PIL import Image
 from vts_msgs.msg import ImageTensor, FullGraph
 from vts_camera.camera import Camera
+import matplotlib.pyplot as plt
 
 class CameraNode(Node):
     def __init__(self) -> None:
@@ -87,6 +88,40 @@ class CameraNode(Node):
             self.get_logger().warn("Second trajectory finished. Shutting down node.")
             time.sleep(3)
             sys.exit(0)
+    
+
+def plot_trajectory_from_file(file_path: str) -> None:
+    timestamps: list[float] = []
+    x_coords: list[float] = []
+    y_coords: list[float] = []
+
+    with open(file_path, 'r') as file:
+        for line in file:
+            parts = line.strip().split()
+            if len(parts) < 11:
+                continue  # skip malformed lines
+            
+            # Extract timestamp (column 4 and 5)
+            time_sec = int(parts[3])
+            time_usec = int(parts[4])
+            timestamp = time_sec + time_usec * 1e-6
+            timestamps.append(timestamp)
+            
+            # Extract x and y coordinates (columns 9 and 10, zero-based index 8 and 9)
+            x = float(parts[8])
+            y = float(parts[9])
+            x_coords.append(x)
+            y_coords.append(y)
+
+    # Plotting
+    plt.figure(figsize=(10, 6))
+    plt.plot(x_coords, y_coords, marker='o', linestyle='-')
+    plt.xlabel('X coordinate')
+    plt.ylabel('Y coordinate')
+    plt.title('Trajectory Plot')
+    plt.grid(True)
+    plt.axis('equal')
+    plt.show()
 
 def main(args=None):
     rclpy.init(args=args)

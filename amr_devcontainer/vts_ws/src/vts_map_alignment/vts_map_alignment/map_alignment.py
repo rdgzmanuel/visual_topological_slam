@@ -28,7 +28,7 @@ class MapAligner:
 
         # Neighbor finding
         self._pose_weight: float = 0.8
-        self._threshold: float = 3.0
+        self._threshold: float = 4.0  # 4.0 3.0 fE
 
         # Image stitching
         self._min_matches: int = 10
@@ -157,38 +157,42 @@ class MapAligner:
         return best_match
 
 
-
     def _search_best_match(self, node: GraphNodeClass, k: int = 3) -> tuple[GraphNodeClass, float]:
         """
-        Find the best matching node to the given node in the lookup graph using a KD-tree and cosine similarity.
+        Find the best matching node to the given node in the lookup graph using a KD-tree
+        for spatial proximity and cosine distance for visual similarity.
 
         Args:
             node (GraphNodeClass): The query node.
-            lookup_graph (Graph): The graph containing nodes to search.
-            k (int): The number of nearest neighbors to find.
+            k (int): The number of nearest spatial neighbors to consider.
 
         Returns:
-            GraphNodeClass: The best matching node.
+            tuple[GraphNodeClass, float]: The best matching node and the combined similarity score.
         """
+        # Extract 2D poses for KD-tree
         node_positions: np.ndarray = np.array([n.pose[:2] for n in self.updated_graph.nodes.values()])
         node_list: list[GraphNodeClass] = list(self.updated_graph.nodes.values())
 
         kd_tree: KDTree = KDTree(node_positions)
 
-        distances: np.ndarray
-        indices: np.ndarray
+        # Find spatially nearest neighbors
         distances, indices = kd_tree.query(node.pose[:2], k=min(k, len(node_list)))
-        
         candidates: list[GraphNodeClass] = [node_list[i] for i in np.atleast_1d(indices)]
-        
+
         best_node: GraphNodeClass | None = None
         best_score: float = float("inf")
 
+        assert 0.0 <= self._pose_weight <= 1.0, "Pose weight must be between 0 and 1."
+
         for i, candidate in enumerate(candidates):
-            pose_dist: float = distances[i]
-            visual_sim: float = cosine(node.visual_features, candidate.visual_features)
-            
-            score: float = self._pose_weight * pose_dist + (1 - self._pose_weight) * visual_sim
+            pose_distance: float = distances[i]
+            visual_distance: float = cosine(node.visual_features, candidate.visual_features)
+
+            # Weighted sum of pose distance and visual distance
+            score: float = (
+                self._pose_weight * pose_distance
+                + (1 - self._pose_weight) * visual_distance
+            )
 
             if score < best_score:
                 best_score = score
@@ -199,10 +203,14 @@ class MapAligner:
 
     def _check_next_node_neighbors(self, next_node: GraphNodeClass, new_node: GraphNodeClass) -> None:
         """
-        
+        Attempts to insert new_node between next_node and its neighbors if it improves graph structure.
+
+        If new_node lies in a similar direction and forms a shorter path to a neighbor of next_node,
+        it replaces the direct edge with two edges: next_node <-> new_node and new_node <-> neighbor.
 
         Args:
-            next_node (GraphNodeClass): _description_
+            next_node (GraphNodeClass): An existing node in the graph.
+            new_node (GraphNodeClass): A candidate node to insert between next_node and its neighbors.
         """
         # Now we check the next node's neighbors in case we can also introduce the new node between them.
         direction_vector: np.array = np.array(next_node.pose[:2]) - np.array(new_node.pose[:2])
@@ -260,6 +268,8 @@ class MapAligner:
         best_match.image = new_image
         best_match.visual_features = new_visual_features
 
+        best_match.update_semantics()
+
         return None
     
 
@@ -295,8 +305,8 @@ class MapAligner:
 
         # Draw nodes
         for node in self.updated_graph.nodes.values():
-            y, x, _ = node.pose  # Assuming pose = (y, x, theta)
-            px, py = world_to_pixel(-x, y, map_img.shape, self._world_limits, origin=self._origin)
+            x, y, _ = node.pose  # Assuming pose = (y, x, theta)
+            px, py = world_to_pixel(x, y, map_img.shape, self._world_limits, origin=self._origin)
             cv2.circle(map_img, (px, py), 5, (0, 0, 255), -1)
 
         # Draw edges
@@ -304,10 +314,10 @@ class MapAligner:
             node_1: GraphNodeClass = self.updated_graph.nodes.get(idx_1)
             node_2: GraphNodeClass = self.updated_graph.nodes.get(idx_2)
             if node_1 is not None and node_2 is not None:
-                y1, x1, _ = node_1.pose
-                y2, x2, _ = node_2.pose
-                p1 = world_to_pixel(-x1, y1, map_img.shape, self._world_limits, origin=self._origin)
-                p2 = world_to_pixel(-x2, y2, map_img.shape, self._world_limits, origin=self._origin)
+                x1, y1, _ = node_1.pose
+                x2, y2, _ = node_2.pose
+                p1 = world_to_pixel(x1, y1, map_img.shape, self._world_limits, origin=self._origin)
+                p2 = world_to_pixel(x2, y2, map_img.shape, self._world_limits, origin=self._origin)
                 cv2.line(map_img, p1, p2, (0, 255, 0), 2)  # Green lines for edges
 
         cv2.imwrite(output_path, map_img)
@@ -407,7 +417,6 @@ class MapAligner:
                     # Convert to grayscale and find non-zero regions for blending
                     gray_warped: np.ndarray = cv2.cvtColor(warped_img1, cv2.COLOR_BGR2GRAY)
                     _, mask = cv2.threshold(gray_warped, 1, 255, cv2.THRESH_BINARY)
-                    # self._logger.warn("pre block")
                     # Crop the stitched image
                     stitched_image = self.crop_black_borders(warped_img1, mask)
                 else:

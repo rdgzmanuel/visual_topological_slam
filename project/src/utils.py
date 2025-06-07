@@ -34,7 +34,7 @@ class COLDataset(Dataset):
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.5], std=[0.5])
         ])
-        
+
         labels_correspondence: dict[str, int] = {
             "CR": 0,
             "2PO": 1,
@@ -361,7 +361,7 @@ def load_model(name: str) -> RecursiveScriptModule:
     if not os.path.exists(model_path):
         model_path = f"models/{name}.pt"
 
-    model: RecursiveScriptModule = torch.jit.load(model_path)
+    model: RecursiveScriptModule = torch.jit.load(model_path, map_location="cpu")
 
     return model
 

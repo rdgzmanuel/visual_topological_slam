@@ -6,7 +6,7 @@ import sys
 from rclpy.node import Node
 from collections import deque
 from typing import Deque
-from vts_msgs.msg import FullGraph, GraphNode
+from vts_msgs.msg import FullGraph, CommandMessage
 from vts_graph_building.node import GraphNodeClass
 from vts_map_alignment.graph_class import Graph
 from vts_map_alignment.map_alignment import MapAligner
@@ -23,12 +23,12 @@ class GraphAlignment(Node):
         trajectory: str = self.get_parameter("trajectory").get_parameter_value().string_value
 
         self.declare_parameter("map_name", "default_value")
-        map_name: str = self.get_parameter("map_name").get_parameter_value().string_value
+        self._map_name: str = self.get_parameter("map_name").get_parameter_value().string_value
 
         self.declare_parameter("origin", (0, 0))
         origin: tuple[int, int] = tuple(self.get_parameter("origin").
                                         get_parameter_value().integer_array_value.tolist())
-        
+
         self.declare_parameter("world_limits", (0.0, 0.0, 0.0, 0.0))
         world_limits: tuple[float, float, float, float] = tuple(self.get_parameter("world_limits").
                                                                  get_parameter_value().double_array_value.tolist())
@@ -37,9 +37,11 @@ class GraphAlignment(Node):
             FullGraph, "/graph_alignment", self.graph_message_callback, 10
         )
 
+        self._graph_publisher = self.create_publisher(CommandMessage, "/commands", 10)
+
         self._graph_queue: Deque[FullGraph] = deque(maxlen=2)
 
-        self._map_aligner: MapAligner = MapAligner(model_name, trajectory, world_limits, origin, map_name)
+        self._map_aligner: MapAligner = MapAligner(model_name, trajectory, world_limits, origin, self._map_name)
 
         # self._start_directly()
 
@@ -48,8 +50,10 @@ class GraphAlignment(Node):
         first_graph: str = "graph_1.pkl"
         second_graph: str = "graph_2.pkl"
 
-        graph_1: list[tuple[GraphNodeClass, GraphNodeClass]] = self.load_graph_data(os.path.join("graphs", first_graph))
-        graph_2: list[tuple[GraphNodeClass, GraphNodeClass]] = self.load_graph_data(os.path.join("graphs", second_graph))
+        path: str = f"graphs/{self._map_name[:-4]}"
+
+        graph_1: list[tuple[GraphNodeClass, GraphNodeClass]] = self.load_graph_data(os.path.join(path, first_graph))
+        graph_2: list[tuple[GraphNodeClass, GraphNodeClass]] = self.load_graph_data(os.path.join(path, second_graph))
 
         self.graphs_callback(graph_1, graph_2)
 
@@ -63,16 +67,13 @@ class GraphAlignment(Node):
 
         first_graph: str = "graph_1.pkl"
         second_graph: str = "graph_2.pkl"
+        path: str = f"graphs/{self._map_name[:-4]}"
         
         if len(self._graph_queue) == 2:
             self.get_logger().warn("Received two graphs. Starting alignment...")
-            # graph_msg_1: FullGraph = self._graph_queue.popleft()
-            # graph_msg_2: FullGraph = self._graph_queue.popleft()
 
-            # self.graphs_callback(graph_msg_1, graph_msg_2)
-
-            graph_1: list[tuple[GraphNodeClass, GraphNodeClass]] = self.load_graph_data(os.path.join("graphs", first_graph))
-            graph_2: list[tuple[GraphNodeClass, GraphNodeClass]] = self.load_graph_data(os.path.join("graphs", second_graph))
+            graph_1: list[tuple[GraphNodeClass, GraphNodeClass]] = self.load_graph_data(os.path.join(path, first_graph))
+            graph_2: list[tuple[GraphNodeClass, GraphNodeClass]] = self.load_graph_data(os.path.join(path, second_graph))
 
             self.graphs_callback(graph_1, graph_2)
 
@@ -83,43 +84,27 @@ class GraphAlignment(Node):
         Processes and aligns two received graphs.
         """
         self.get_logger().warn("Processing graphs")
-        # graph_1: Graph = self._process_graph_msg(graph_msg_1)
-        # graph_2: Graph = self._process_graph_msg(graph_msg_2)
 
-        graph_1: Graph = self._new_process_graph(graph_list_1)
-        graph_2: Graph = self._new_process_graph(graph_list_2)
-        
+        graph_1: Graph = self._process_graph(graph_list_1)
+        graph_2: Graph = self._process_graph(graph_list_2)
+
         self.get_logger().warn("Aligning graphs")
         self._map_aligner.align_graphs(graph_1, graph_2)
         self.get_logger().warn("Generating maps")
         self._map_aligner.generate_map()
-        self.get_logger().warn("Map generated. Shutting down node.")
+        self._save_graph_data(self._map_aligner.updated_graph)
+        self.get_logger().warn("Map generated and saved.")
+
+        message: CommandMessage = CommandMessage()
+        message.confirmation = 1
+
+        self._graph_publisher.publish(message)
+
+        self.get_logger().warn("Message sent. Shutting down node.")
         sys.exit(0)
 
 
-    def _process_graph_msg(self, message: FullGraph) -> Graph:
-        """
-        Converts a FullGraph message into a Graph object.
-        """
-        graph: Graph = Graph()
-        edges: list[int] = message.edges
-
-        for node_message in message.nodes:
-            image: np.ndarray = np.array(node_message.image).reshape(node_message.shape).astype(np.uint8)
-            pose: tuple[float, float] = tuple(node_message.pose)
-            features: np.ndarray = np.array(node_message.features)
-            id: int = node_message.node_id
-
-            new_node: GraphNodeClass = GraphNodeClass(id=id, pose=pose, visual_features=features, image=image)
-            graph.nodes[id] = new_node
-
-        for i in range(0, len(edges), 2):
-            graph.edges.append((edges[i], edges[i + 1]))
-        
-        return graph
-    
-
-    def _new_process_graph(self, graph_list: list[tuple[GraphNodeClass, GraphNodeClass]]) -> Graph:
+    def _process_graph(self, graph_list: list[tuple[GraphNodeClass, GraphNodeClass]]) -> Graph:
         """
         
 
@@ -151,7 +136,8 @@ class GraphAlignment(Node):
                 image: np.ndarray = np.array(node.image.flatten().tolist()).reshape(list(node.image.shape)).astype(np.uint8)
                 pose: tuple[float, float] = tuple(node.pose)
                 features: np.ndarray = np.array(node.visual_features.tolist())
-                new_node: GraphNodeClass = GraphNodeClass(id=id, pose=pose, visual_features=features, image=image)
+                semantics: np.ndarray = np.array(node.semantics.tolist())
+                new_node: GraphNodeClass = GraphNodeClass(id=id, pose=pose, visual_features=features, image=image, semantics=semantics)
                 new_graph.nodes[id] = new_node
 
             id = adjacent.id
@@ -159,7 +145,8 @@ class GraphAlignment(Node):
                 image: np.ndarray = np.array(adjacent.image.flatten().tolist()).reshape(list(adjacent.image.shape)).astype(np.uint8)
                 pose: tuple[float, float] = tuple(adjacent.pose)
                 features: np.ndarray = np.array(adjacent.visual_features.tolist())
-                new_node: GraphNodeClass = GraphNodeClass(id=id, pose=pose, visual_features=features, image=image)
+                semantics: np.ndarray = np.array(adjacent.semantics.tolist())
+                new_node: GraphNodeClass = GraphNodeClass(id=id, pose=pose, visual_features=features, image=image, semantics=semantics)
                 new_graph.nodes[id] = new_node
 
         for i in range(0, len(edges), 2):
@@ -183,6 +170,19 @@ class GraphAlignment(Node):
             graph = pickle.load(f)
 
         return graph
+
+
+    def _save_graph_data(self, graph: Graph):
+        """
+        Saves the graph and edges data to a file using pickle (binary format).
+        """
+        filename: str = "final_graph.pkl"
+        filename = os.path.join(f"graphs/{self._map_name[:-4]}", filename)
+
+        with open(filename, "wb") as f:
+            pickle.dump(graph, f)
+
+        self.get_logger().warn("Graph saving done with pickle")
 
 
 def main(args: list[str] = None) -> None:

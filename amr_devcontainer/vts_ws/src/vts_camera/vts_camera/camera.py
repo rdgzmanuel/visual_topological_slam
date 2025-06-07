@@ -3,7 +3,7 @@ import sys
 
 sys.path.append("/workspace/project/src")
 
-from models import CNNExtractor, AutoEncoder, CNNAvgPool, AEAvgPool
+from models import CNNExtractor, AutoEncoder
 from utils import load_model
 
 class Camera:
@@ -17,7 +17,7 @@ class Camera:
         Args:
             model_name (str): name of the model used for feature extraction
         """
-        self._model: AutoEncoder = load_model(model_name)
+        self._model: AutoEncoder | CNNExtractor = load_model(model_name)
         self._model.eval()
     
     def extract_features(self, image: torch.Tensor) -> torch.Tensor:
@@ -31,7 +31,17 @@ class Camera:
             torch.Tensor: features extracted from the image
         """
         # features: torch.tensor = self._model.extract_features(image)
-        features: torch.tensor = self._model.encoder(image.unsqueeze(0))
-        features: torch.tensor = self._model.avgpool(features)
-        features = torch.flatten(features, 1)
-        return self._model.fc_enc(features)
+
+        # AE
+        # features: torch.tensor = self._model.encoder(image.unsqueeze(0))
+        # features: torch.tensor = self._model.avgpool(features)
+        # features = torch.flatten(features, 1)
+        # return self._model.fc_enc(features)
+
+        # CNN
+        image = image.unsqueeze(0)
+        assert image.shape[1] == 3, f"{image.shape}"
+        assert image.dtype == torch.float32
+
+        _ = self._model.forward(image)
+        return self._model.last_features

@@ -2,11 +2,16 @@ import rclpy
 import sys
 import pickle
 import os
+import bisect
 import gc
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
 import numpy as np
 import time
 from rclpy.node import Node
 from vts_msgs.msg import ImageTensor, GraphNode, FullGraph
+from geometry_msgs.msg import Quaternion
 from vts_graph_building.graph_builder import GraphBuilder
 
 
@@ -21,13 +26,13 @@ class GraphBuilderNode(Node):
         self.declare_parameter("n", 30)
         self._n: int = self.get_parameter("n").get_parameter_value().integer_value
 
-        self.declare_parameter("gamma_proportion", 0.4) # lower bound for peaks 0.5   0.4 fE sE
+        self.declare_parameter("gamma_proportion", 0.6) # lower bound for peaks 0.5   0.4 fE sE
         self._gamma_proportion: float = self.get_parameter("gamma_proportion").get_parameter_value().double_value
 
-        self.declare_parameter("delta_proportion", 0.09) # minimum difference of the a. c. between consecutive peaks 0.11 / 0.09  fE sE
+        self.declare_parameter("delta_proportion", 0.13) # minimum difference of the a. c. between consecutive peaks 0.11 / 0.09  fE sE
         self._delta_proportion: float = self.get_parameter("delta_proportion").get_parameter_value().double_value
 
-        self.declare_parameter("distance_threshold", 4.0) # 3.5 fA   2.0 fE  4.0 sE
+        self.declare_parameter("distance_threshold", 3.0) # 3.5 fA   2.0 fE  4.0 sE  3.0 sA
         self._distance_threshold: float = self.get_parameter("distance_threshold").get_parameter_value().double_value
 
         self.declare_parameter("start_1", (0.0, 0.0, 0.0))
@@ -81,7 +86,44 @@ class GraphBuilderNode(Node):
 
         self._is_first_trajectory: bool = True
 
+        self._valley_indices: list[int] = []
+
         # self._publish_loaded_graphs()
+
+        # self._create_odometry_list(self._trajectory_1)
+    
+
+    def _create_odometry_list(self, trajectory: str) -> None:
+        """
+        Creates odometry list for pose tracking.
+
+        Args:
+            trajectory: Name of the trajectory subfolder to process.
+        """
+        self._timestamps: list[float] = []
+        self._poses: list[tuple[float, float, float]] = []
+
+        seq_data_folder: str = "/workspace/project/seq_data"
+        scans_folder: str = "odom_scans"
+        trajectory_folder: str = os.path.join(seq_data_folder, trajectory)
+        scan_path: str = os.path.join(trajectory_folder, scans_folder)
+        odometry_file: str = os.path.join(scan_path, "odom.tdf")
+
+        with open(odometry_file, "r") as f:
+            for line in f:
+                parts: list[str] = line.strip().split()
+                if len(parts) < 11:
+                    continue
+                t_sec: int = int(parts[3])
+                t_usec: int = int(parts[4])
+                timestamp: float = t_sec + t_usec * 1e-6
+                x: float = float(parts[8])
+                y: float = float(parts[9])
+                theta: float = float(parts[11])
+                self._timestamps.append(timestamp)
+                self._poses.append((x, y, theta))
+
+        return None
 
 
     def _create_graph_builder(self, trajectory: str, start: tuple[float, float, float]) -> GraphBuilder:
@@ -112,12 +154,13 @@ class GraphBuilderNode(Node):
 
         self.graph_builder.new_update_pose(image_name)
         array_data: np.ndarray = np.array(data).astype("float32")
-        self.graph_builder.update_matrices(array_data)
+        self.graph_builder.update_matrices(array_data)        
 
         if len(self.graph_builder.window_images) > 1:
             lambda_2, valley_idx = self.graph_builder.look_for_valley()
 
             if valley_idx not in [0, prev_index - 1]:
+                self._valley_indices.append(valley_idx)
                 prev_index = valley_idx
                 self.graph_builder.update_graph()
             
@@ -125,64 +168,86 @@ class GraphBuilderNode(Node):
                 self.graph_builder.check_pose()
 
 
+    def _get_closest_pose(self, query_time: float) -> tuple[float, float, float]:
+        """
+        Finds the pose in the odometry buffer with the closest timestamp to the given query time.
+        bisect_left(list, value) returns the index i where value should be inserted to
+        maintain the list's sorted order.
+
+        Args:
+            query_time (float): The target timestamp (in seconds) for which to find the closest pose.
+
+        Returns:
+            tuple[float, float, float]: The (x, y, theta) pose corresponding to the closest timestamp.
+        """
+        i: int = bisect.bisect_left(self._timestamps, query_time)
+
+        if i == 0:
+            return self._poses[0]
+        if i == len(self._timestamps):
+            return self.poses[-1]
+
+        before: float = self._timestamps[i - 1]
+        after: float = self._timestamps[i]
+
+        return self._poses[i - 1] if abs(before - query_time) < abs(after - query_time) else self._poses[i]
+
+
     def _publish_graph(self) -> None:
         """
-        Publishes graph in graph_bulding topic
+        Publishes confirmation message in graph_bulding topic
         """
-        # self.get_logger().warn("Publishing Graph...")
-        # graph: list = []
-        # edges: list[int] = []
-
-        # for node, adjacent in self.graph_builder.graph:
-        #     if np.isnan(node.image).any() or np.isinf(node.image).any():
-        #         self.get_logger().error(f"Node {node.id} has invalid image data!")
-
-        #     if np.isnan(node.visual_features).any() or np.isinf(node.visual_features).any():
-        #         self.get_logger().error(f"Node {node.id} has invalid features!")
-
-        #     if np.isnan(node.pose).any() or np.isinf(node.pose).any():
-        #         self.get_logger().error(f"Node {node.id} has invalid pose!")
-            
-
-        #     # self.get_logger().warn("message")
-        #     node_message: GraphNode = GraphNode()
-        #     self.get_logger().warn(f"pose {list(node.pose)}")
-        #     node_message.pose = list(node.pose)
-        #     self.get_logger().warn(f"shape {list(node.image.shape)}")
-        #     node_message.shape = list(node.image.shape)
-        #     node_message.image = node.image.flatten().tolist()
-        #     self.get_logger().warn(f" visua shape {list(node.visual_features.shape)}")
-        #     node_message.features = node.visual_features.tolist()
-        #     node_message.node_id = node.id
-
-        #     self.get_logger().warn(f"image size: {len(node_message.image)}, features size: {len(node_message.features)}")
-
-
-        #     graph.append(node_message)
-        #     edges.append(node.id)
-        #     edges.append(adjacent.id)
-
-        self.get_logger().warn("creating graph")
-
         graph_message: FullGraph = FullGraph()
-        # graph_message.nodes = graph
         graph_message.edges = [1]
 
-        self.save_graph_data(graph=self.graph_builder.graph, first=self._is_first_trajectory)
+        # self._plot_eigenvalues()
+
+        self._save_graph_data(graph=self.graph_builder.graph, first=self._is_first_trajectory)
         self.get_logger().warn("Graph saved")
 
         self._graph_publisher.publish(graph_message)
         self.get_logger().warn("Graph published")
+    
+
+    def _plot_eigenvalues(self) -> None:
+        """
+        Plots the eigenvalues time series and highlights valley indices with vertical dashed lines.
+
+        Output:
+            A PNG image file at 'images/eigenvalues/eigenvalues.png'.
+        """
+        eigenvalues: list[float] = self.graph_builder.eigenvalues[:800]
+        indices: list[int] = self._valley_indices
+
+        cutoff_index = next((i for i, idx in enumerate(indices) if idx >= 800), len(indices))
+        indices = indices[:max(cutoff_index - 1, 0)]
+
+        output_file: str = "images/eigenvalues/eigenvalues.png"
+        os.makedirs(os.path.dirname(output_file), exist_ok=True)
+        plt.figure(figsize=(10, 6))
+        # Plot eigenvalues time series
+        plt.plot(eigenvalues, color='lightblue', label='Eigenvalues')
+        # Plot vertical dashed lines at valley indices
+        for idx in indices:
+            plt.axvline(x=idx, color='darkblue', linestyle='--', linewidth=1)
+        plt.title("Eigenvalues Time Series with Valley Indices")
+        plt.xlabel("Index")
+        plt.ylabel("Eigenvalue")
+        plt.grid(True, linestyle='--', alpha=0.5)
+        plt.tight_layout()
+        plt.savefig(output_file)
+        plt.close()
 
 
-    def save_graph_data(self, graph: list[tuple[GraphNode, GraphNode]], first: bool):
+
+    def _save_graph_data(self, graph: list[tuple[GraphNode, GraphNode]], first: bool):
         """
         Saves the graph and edges data to a file using pickle (binary format).
         """
         filename: str = "graph_1.pkl" if first else "graph_2.pkl"
-        filename: str = os.path.join("graphs", filename)
+        output_path = os.path.join(f"graphs/{self._map_name[:-4]}", filename)
 
-        with open(filename, "wb") as f:
+        with open(output_path, "wb") as f:
             pickle.dump(graph, f)
 
         self.get_logger().warn("Graph saving done with pickle")
@@ -195,10 +260,12 @@ class GraphBuilderNode(Node):
 
         self.get_logger().warn("First trajectory complete. Starting to process the second trajectory...")
         del self.graph_builder
+
         gc.collect()
         time.sleep(3)  # To let current builder to finish its tasks
-        # new_graph_builder = self._create_graph_builder(self._trajectory_2, self._start_2)
+
         self.get_logger().warn("builder created")
+        # self._create_odometry_list(self._trajectory_2)
         self.graph_builder = self._create_graph_builder(self._trajectory_2, self._start_2)
         self._is_first_trajectory = False
 

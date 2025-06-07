@@ -20,6 +20,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/ImageTensor.msg"
   "msg/GraphNode.msg"
   "msg/FullGraph.msg"
+  "msg/CommandMessage.msg"
   DEPENDENCIES builtin_interfaces geometry_msgs std_msgs sensor_msgs nav_msgs
 )
 

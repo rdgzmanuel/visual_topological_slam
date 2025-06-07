@@ -6,7 +6,7 @@ from torchvision.models import ResNet101_Weights
 
 class CNNExtractor(nn.Module):
     """
-    CNN feature extractor using a ResNet50 backbone.
+    CNN feature extractor using a ResNet101 backbone.
     """
     def __init__(self, output_size: int = 12, dropout: float = 0.5) -> None:
         """
