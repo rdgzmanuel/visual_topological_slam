@@ -10,7 +10,7 @@
     "runArgs": [
         "--network=host",
         "--add-host=host.docker.internal:host-gateway",
-        "--hostname=humble"
+        "--hostname=humble",
     ],
     "forwardPorts": [
         3389

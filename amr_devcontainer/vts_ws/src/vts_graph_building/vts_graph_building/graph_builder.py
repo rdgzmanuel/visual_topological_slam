@@ -70,16 +70,16 @@ class GraphBuilder:
         self._max_size: int = 100
 
         # images stitching
-        self._min_matches: int = 3
+        self._min_matches: int = 4
         self._min_descriptors: int = 2
         self._camera: Camera = Camera(model_name)
         self._image_shape: tuple[int, int, int] | None = None
 
         # rewiring
         self._ext_rewiring: bool = ext_rewiring
-        self._rewiring_threshold: float = 1.25 # 3.0 fA 1.25 sA   4.0 fE  4.25 sE
-        self._external_rewiring_threshold: float = 1.0 # 2.5 fA 1.0 sA   3.5 fE   4.0 sE
-        self._hard_threshold: float = 0.55 # 0.7 fAE  0.55 sA 
+        self._rewiring_threshold: float = 3.0 # 3.0 fA 1.25 sA   4.0 fE  4.25 sE
+        self._external_rewiring_threshold: float = 2.5 # 2.5 fA 1.0 sA   3.5 fE   4.0 sE
+        self._hard_threshold: float = 0.7 # 0.7 fAE  0.55 sA 
         self._min_rewire_nodes: int = 3
 
         self._logger = rclpy.logging.get_logger('GraphBuilder')
@@ -187,7 +187,9 @@ class GraphBuilder:
             # self._logger.warn(f"path {image_path}")
             self._image_shape = image.shape
         # self._logger.warn("pre resize")
-        image = cv2.resize(image, (self._image_shape[1], self._image_shape[0]))
+
+        if self._image_shape is not None:
+            image = cv2.resize(image, (self._image_shape[1], self._image_shape[0]))
 
         return image
 
@@ -449,7 +451,7 @@ class GraphBuilder:
             # self._logger.warn(f"New embeddings: {new_node.semantics}")
             self.current_node = new_node
             # self._logger.warn(f"NEW CURRENT INITIAL UPDATE {self.current_node.pose}")
-            self._plot_node_on_map(self.current_node.pose)
+            # self._plot_node_on_map(self.current_node.pose)
 
         else:
             closest_neighbor: GraphNodeClass = self._search_closest_neighbor(new_node.pose, new_node.visual_features)
@@ -492,7 +494,7 @@ class GraphBuilder:
                 self.current_node.neighbors.add(new_node)
                 self.current_node = new_node
                 # self._logger.warn(f"NEW CURRENT {self.current_node.pose}")
-                self._plot_node_on_map(self.current_node.pose)
+                # self._plot_node_on_map(self.current_node.pose)
                 # self._logger.warn("finish update")
             # self._logger.warn(f"----")
 
@@ -549,7 +551,7 @@ class GraphBuilder:
             closets_neighbor (GraphNodeClass): _description_
         """
         # new_pose = self._average_pose(closest_neighbor.pose, new_node.pose)
-        new_image: np.ndarray = self.stitch_images(new_node.image, closest_neighbor.image,
+        new_image: np.ndarray = self.stitch_images(closest_neighbor.image, new_node.image,
                                             min_matches=self._min_matches)
         new_image = cv2.resize(new_image, (self._image_shape[1], self._image_shape[0]))
         tensor_image: torch.Tensor = process_stitched_image(new_image)
@@ -558,7 +560,7 @@ class GraphBuilder:
         # closest_neighbor.pose = new_pose
         closest_neighbor.image = new_image
         closest_neighbor.visual_features = new_visual_features
-        self._plot_node_on_map(closest_neighbor.pose)
+        # self._plot_node_on_map(closest_neighbor.pose)
 
         closest_neighbor.update_semantics()
 
@@ -937,8 +939,8 @@ class GraphBuilder:
 
         map_img = cv2.imread(map_folder)
 
-        x, y, _ = pose  # Ignore theta for now
-        px, py = self.world_to_pixel(x, y, map_img.shape, self._world_limits, self._origin)
+        y, x, _ = pose  # Ignore theta for now
+        px, py = self.world_to_pixel(-x, y, map_img.shape, self._world_limits, self._origin)
         # self._logger.warn("post world")
         if node:
             cv2.circle(map_img, (px, py), 5, (0, 0, 255), -1)
@@ -992,13 +994,13 @@ class GraphBuilder:
         map_img = cv2.imread(map_folder)
 
         for _, pose, _ in self._images_pose:
-            x, y, _ = pose
-            px, py = self.world_to_pixel(x, y, map_img.shape, self._world_limits, origin=self._origin)
+            y, x, _ = pose
+            px, py = self.world_to_pixel(-x, y, map_img.shape, self._world_limits, origin=self._origin)
             cv2.circle(map_img, (px, py), 1, (255, 0, 0), -1)
 
         for node, _ in self.graph:
-            x, y, _ = node.pose
-            px, py = self.world_to_pixel(x, y, map_img.shape, self._world_limits, origin=self._origin)
+            y, x, _ = node.pose
+            px, py = self.world_to_pixel(-x, y, map_img.shape, self._world_limits, origin=self._origin)
             cv2.circle(map_img, (px, py), 5, (0, 0, 255), -1)
 
         cv2.imwrite(output_path, map_img)
@@ -1018,16 +1020,16 @@ class GraphBuilder:
 
         # Draw nodes
         for node, _ in self.graph:
-            x, y, _ = node.pose  # Assuming pose = (y, x, theta)
-            px, py = world_to_pixel(x, y, map_img.shape, self._world_limits, origin=self._origin)
+            y, x, _ = node.pose  # Assuming pose = (y, x, theta)
+            px, py = world_to_pixel(-x, y, map_img.shape, self._world_limits, origin=self._origin)
             cv2.circle(map_img, (px, py), 5, (0, 0, 255), -1)
 
         for node_1, node_2 in self.graph:
             if node_1 is not None and node_2 is not None:
-                x1, y1, _ = node_1.pose
-                x2, y2, _ = node_2.pose
-                p1 = world_to_pixel(x1, y1, map_img.shape, self._world_limits, origin=self._origin)
-                p2 = world_to_pixel(x2, y2, map_img.shape, self._world_limits, origin=self._origin)
+                y1, x1, _ = node_1.pose
+                y2, x2, _ = node_2.pose
+                p1 = world_to_pixel(-x1, y1, map_img.shape, self._world_limits, origin=self._origin)
+                p2 = world_to_pixel(-x2, y2, map_img.shape, self._world_limits, origin=self._origin)
                 cv2.line(map_img, p1, p2, (0, 255, 0), 2)  # Green lines for edges
 
         cv2.imwrite(output_path, map_img)
@@ -1035,71 +1037,82 @@ class GraphBuilder:
         return None
 
 
-    def stitch_images(self, image_1: np.ndarray, image_2: np.ndarray, min_matches: int = 5) -> np.ndarray:
+    def stitch_images(
+        self,
+        image_1: np.ndarray,
+        image_2: np.ndarray,
+        min_matches: int = 4
+    ) -> np.ndarray:
         """
-        Stitches two images together using feature matching and homography.
-
+        Stitches two images together using SIFT feature matching and homography.
+        
         Args:
-            img1 (str): first input image path.
-            img2 (str): second input image (BGR format).
-
+            image_1 (np.ndarray): First input image (BGR format).
+            image_2 (np.ndarray): Second input image (BGR format).
+            min_matches (int): Minimum number of good matches to attempt stitching.
+        
         Returns:
-            np.ndarray: stitched image if successful, otherwise concated images.
+            np.ndarray: Stitched image if successful, otherwise fallback image.
         """
 
         gray_1: np.ndarray = cv2.cvtColor(image_1, cv2.COLOR_BGR2GRAY)
         gray_2: np.ndarray = cv2.cvtColor(image_2, cv2.COLOR_BGR2GRAY)
 
-        sift = cv2.SIFT_create()
+        sift: cv2.SIFT = cv2.SIFT_create()
         kp1: list[cv2.KeyPoint]
-        kp2: list[cv2.KeyPoint]
         des1: np.ndarray
-        des2: np.ndarray
         kp1, des1 = sift.detectAndCompute(gray_1, None)
+
+        kp2: list[cv2.KeyPoint]
+        des2: np.ndarray
         kp2, des2 = sift.detectAndCompute(gray_2, None)
 
-        # FLANN based feature matching
+        if des1 is None or des2 is None or len(des1) < 2 or len(des2) < 2:
+            return image_1  # No descriptors or too few: can't proceed
+
         index_params: dict[str, int] = {"algorithm": 1, "trees": 5}
         search_params: dict[str, int] = {"checks": 50}
         flann: cv2.FlannBasedMatcher = cv2.FlannBasedMatcher(index_params, search_params)
 
+        try:
+            matches: list[list[cv2.DMatch]] = flann.knnMatch(des1, des2, k=2)
+        except cv2.error:
+            return image_1  # Matching failed
 
-        if des1 is None or des2 is None or len(des1) < 2 or len(des2) < 2:
-            stitched_image: np.ndarray = self.concat_images(image_1, image_2)
-        else:
-            matches: list[list[cv2.DMatch]] = flann.knnMatch(des1, des2, k=self._min_descriptors)
+        good_matches: list[cv2.DMatch] = [
+            m for m, n in matches if m.distance < 0.7 * n.distance
+        ]
 
-            # Lowe's ratio test to keep good matches
-            good_matches: list[cv2.DMatch] = [
-                m for m, n in matches if m.distance < 0.7 * n.distance
-            ]
+        if len(good_matches) < min_matches:
+            return self.concat_images(image_1, image_2)  # Low match count, maybe no overlap
 
-            if len(good_matches) > min_matches:
-                src_pts: np.ndarray = np.float32([kp1[m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
-                dst_pts: np.ndarray = np.float32([kp2[m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+        src_pts: np.ndarray = np.float32([kp1[m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+        dst_pts: np.ndarray = np.float32([kp2[m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
 
-                # Compute homography
-                H, _ = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
+        H: np.ndarray
+        mask_homography: np.ndarray
+        H, mask_homography = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
 
-                # Warp first image to align with the second
-                height, width, _ = image_2.shape
-                if H is not None and H.shape == (3, 3):
-                    H = H.astype(np.float32)  # or np.float64
-                    warped_img1 = cv2.warpPerspective(image_1, H, (width * 2, height))
-                    # Place second image on the stitched result
-                    warped_img1[0:height, 0:width] = image_2
+        if H is None or H.shape != (3, 3):
+            return image_1  # Homography computation failed
 
-                    # Convert to grayscale and find non-zero regions for blending
-                    gray_warped: np.ndarray = cv2.cvtColor(warped_img1, cv2.COLOR_BGR2GRAY)
-                    _, mask = cv2.threshold(gray_warped, 1, 255, cv2.THRESH_BINARY)
-                    # self._logger.warn("pre block")
-                    # Crop the stitched image
-                    stitched_image = self.crop_black_borders(warped_img1, mask)
-                else:
-                    stitched_image = self.concat_images(image_1, image_2)
-            
-            else:
-                stitched_image = self.concat_images(image_1, image_2)
+        height: int
+        width: int
+        height, width, _ = image_2.shape
+        warped_img1: np.ndarray = cv2.warpPerspective(image_1, H, (width * 2, height))
+
+        # Overlay image_2 onto the warp
+        warped_img1[0:height, 0:width] = image_2
+
+        # Basic content quality check
+        gray_warped: np.ndarray = cv2.cvtColor(warped_img1, cv2.COLOR_BGR2GRAY)
+        _, mask_thresh = cv2.threshold(gray_warped, 1, 255, cv2.THRESH_BINARY)
+        nonzero_ratio: float = np.count_nonzero(mask_thresh) / (mask_thresh.shape[0] * mask_thresh.shape[1])
+
+        if nonzero_ratio < 0.2:
+            return image_1  # Warped result is mostly empty
+
+        stitched_image: np.ndarray = self.crop_black_borders(warped_img1, mask_thresh)
 
         return stitched_image
     
@@ -1170,81 +1183,6 @@ class GraphBuilder:
             image_2 = cv2.resize(image_2, (w, int(image_2.shape[0] * w / image_2.shape[1])))
 
         return np.concatenate((image_1, image_2), axis=axis)
-
-
-def stitch_images(image_1: np.ndarray, image_2: np.ndarray, min_matches: int = 5) -> np.ndarray:
-    """
-    Stitches two images together using feature matching and homography.
-
-    Args:
-        img1 (str): first input image path.
-        img2 (str): second input image (BGR format).
-
-    Returns:
-        np.ndarray: stitched image if successful, otherwise concated images.
-    """
-
-    gray_1: np.ndarray = cv2.cvtColor(image_1, cv2.COLOR_BGR2GRAY)
-    gray_2: np.ndarray = cv2.cvtColor(image_2, cv2.COLOR_BGR2GRAY)
-
-    sift = cv2.SIFT_create()
-    kp1: list[cv2.KeyPoint]
-    kp2: list[cv2.KeyPoint]
-    des1: np.ndarray
-    des2: np.ndarray
-    kp1, des1 = sift.detectAndCompute(gray_1, None)
-    kp2, des2 = sift.detectAndCompute(gray_2, None)
-
-    # self._logger.warn("pre flann")
-
-    # FLANN based feature matching
-    index_params: dict[str, int] = {"algorithm": 1, "trees": 5}
-    search_params: dict[str, int] = {"checks": 50}
-    flann: cv2.FlannBasedMatcher = cv2.FlannBasedMatcher(index_params, search_params)
-
-
-    if des1 is None or des2 is None or len(des1) < 2 or len(des2) < 2:
-        stitched_image: np.ndarray = concat_images(image_1, image_2)
-    else:
-        matches: list[list[cv2.DMatch]] = flann.knnMatch(des1, des2, k=min_matches)
-
-        # Lowe's ratio test to keep good matches
-        try:
-            good_matches: list[cv2.DMatch] = [
-                m for m, n in matches if m.distance < 0.7 * n.distance
-            ]
-
-            if len(good_matches) > min_matches:
-                src_pts: np.ndarray = np.float32([kp1[m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
-                dst_pts: np.ndarray = np.float32([kp2[m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
-
-                # Compute homography
-                H, _ = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
-
-                # Warp first image to align with the second
-                height, width, _ = image_2.shape
-                if H is not None and H.shape == (3, 3):
-                    H = H.astype(np.float32)  # or np.float64
-                    warped_img1 = cv2.warpPerspective(image_1, H, (width * 2, height))
-                    # Place second image on the stitched result
-                    warped_img1[0:height, 0:width] = image_2
-
-                    # Convert to grayscale and find non-zero regions for blending
-                    gray_warped: np.ndarray = cv2.cvtColor(warped_img1, cv2.COLOR_BGR2GRAY)
-                    _, mask = cv2.threshold(gray_warped, 1, 255, cv2.THRESH_BINARY)
-                    # self._logger.warn("pre block")
-                    # Crop the stitched image
-                    stitched_image = crop_black_borders(warped_img1, mask)
-                else:
-                    stitched_image = concat_images(image_1, image_2)
-            
-            else:
-                stitched_image = concat_images(image_1, image_2)
-
-        except ValueError:
-            stitched_image = concat_images(image_1, image_2)
-
-    return stitched_image
 
 
 def crop_black_borders(image: np.ndarray, mask: np.ndarray) -> np.ndarray:

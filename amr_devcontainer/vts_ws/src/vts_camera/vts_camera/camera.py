@@ -33,15 +33,13 @@ class Camera:
         # features: torch.tensor = self._model.extract_features(image)
 
         # AE
-        # features: torch.tensor = self._model.encoder(image.unsqueeze(0))
-        # features: torch.tensor = self._model.avgpool(features)
-        # features = torch.flatten(features, 1)
-        # return self._model.fc_enc(features)
+        features: torch.tensor = self._model.encoder(image.unsqueeze(0))
+        features: torch.tensor = self._model.avgpool(features)
+        features = torch.flatten(features, 1)
+        return self._model.fc_enc(features)
 
         # CNN
-        image = image.unsqueeze(0)
-        assert image.shape[1] == 3, f"{image.shape}"
-        assert image.dtype == torch.float32
+        # image = image.unsqueeze(0)
 
-        _ = self._model.forward(image)
-        return self._model.last_features
+        # _ = self._model.forward(image)
+        # return self._model.last_features

@@ -1,5 +1,17 @@
 FROM osrf/ros:humble-desktop
 
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    cmake \
+    libgl1 \
+    libglib2.0-0 \
+    ffmpeg \
+    libsm6 \
+    libxext6 \
+    libxrender-dev \
+    && apt-get clean
+
+
 # Install additional packages
 RUN sudo apt update \
     && export DEBIAN_FRONTEND=noninteractive \
@@ -32,17 +44,19 @@ RUN groupadd --gid $USER_GID $USERNAME \
 # Configure remote desktop
 RUN adduser xrdp ssl-cert
 RUN sed -i '3 a echo " \
-export GNOME_SHELL_SESSION_MODE=Lubuntu\\n\
-export XDG_SESSION_TYPE=x11\\n\
-export XDG_CURRENT_DESKTOP=LXQt\\n\
-export XDG_CONFIG_DIRS=/etc/xdg/xdg-Lubuntu:/etc/xdg\\n\
-" > ~/.xsessionrc' /etc/xrdp/startwm.sh
+    export GNOME_SHELL_SESSION_MODE=Lubuntu\\n\
+    export XDG_SESSION_TYPE=x11\\n\
+    export XDG_CURRENT_DESKTOP=LXQt\\n\
+    export XDG_CONFIG_DIRS=/etc/xdg/xdg-Lubuntu:/etc/xdg\\n\
+    " > ~/.xsessionrc' /etc/xrdp/startwm.sh
 EXPOSE 3389
 
 # Install Python dependencies
 COPY requirements.txt .
-RUN pip install --disable-pip-version-check --no-cache-dir -U -r requirements.txt \
-    && rm requirements.txt
+
+# Add debug output
+RUN pip install --disable-pip-version-check --no-cache-dir -U -r requirements.txt && rm requirements.txt
+
 
 # Start xrdp and a bash terminal
 CMD service xrdp start ; bash

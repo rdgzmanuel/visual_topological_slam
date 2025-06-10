@@ -33,9 +33,9 @@ class GraphAlignment(Node):
         world_limits: tuple[float, float, float, float] = tuple(self.get_parameter("world_limits").
                                                                  get_parameter_value().double_array_value.tolist())
 
-        self._graph_subscriber = self.create_subscription(
-            FullGraph, "/graph_alignment", self.graph_message_callback, 10
-        )
+        # self._graph_subscriber = self.create_subscription(
+        #     FullGraph, "/graph_alignment", self.graph_message_callback, 10
+        # )
 
         self._graph_publisher = self.create_publisher(CommandMessage, "/commands", 10)
 
@@ -43,7 +43,7 @@ class GraphAlignment(Node):
 
         self._map_aligner: MapAligner = MapAligner(model_name, trajectory, world_limits, origin, self._map_name)
 
-        # self._start_directly()
+        self._start_directly()
 
 
     def _start_directly(self) -> None:
@@ -176,11 +176,11 @@ class GraphAlignment(Node):
         """
         Saves the graph and edges data to a file using pickle (binary format).
         """
-        filename: str = "final_graph.pkl"
-        filename = os.path.join(f"graphs/{self._map_name[:-4]}", filename)
+        # filename: str = "final_graph.pkl"
+        # filename = os.path.join(f"graphs/{self._map_name[:-4]}", filename)
 
-        with open(filename, "wb") as f:
-            pickle.dump(graph, f)
+        # with open(filename, "wb") as f:
+        #     pickle.dump(graph, f)
 
         self.get_logger().warn("Graph saving done with pickle")
 

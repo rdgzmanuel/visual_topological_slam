@@ -26,13 +26,13 @@ class GraphBuilderNode(Node):
         self.declare_parameter("n", 30)
         self._n: int = self.get_parameter("n").get_parameter_value().integer_value
 
-        self.declare_parameter("gamma_proportion", 0.6) # lower bound for peaks 0.5   0.4 fE sE
+        self.declare_parameter("gamma_proportion", 0.5) # lower bound for peaks 0.5   0.4 fE sE
         self._gamma_proportion: float = self.get_parameter("gamma_proportion").get_parameter_value().double_value
 
-        self.declare_parameter("delta_proportion", 0.13) # minimum difference of the a. c. between consecutive peaks 0.11 / 0.09  fE sE
+        self.declare_parameter("delta_proportion", 0.11) # minimum difference of the a. c. between consecutive peaks 0.11 / 0.09  fE sE
         self._delta_proportion: float = self.get_parameter("delta_proportion").get_parameter_value().double_value
 
-        self.declare_parameter("distance_threshold", 3.0) # 3.5 fA   2.0 fE  4.0 sE  3.0 sA
+        self.declare_parameter("distance_threshold", 3.5) # 3.5 fA   2.0 fE  4.0 sE  3.0 sA
         self._distance_threshold: float = self.get_parameter("distance_threshold").get_parameter_value().double_value
 
         self.declare_parameter("start_1", (0.0, 0.0, 0.0))
@@ -200,7 +200,7 @@ class GraphBuilderNode(Node):
         graph_message: FullGraph = FullGraph()
         graph_message.edges = [1]
 
-        # self._plot_eigenvalues()
+        self._plot_eigenvalues()
 
         self._save_graph_data(graph=self.graph_builder.graph, first=self._is_first_trajectory)
         self.get_logger().warn("Graph saved")
@@ -231,8 +231,8 @@ class GraphBuilderNode(Node):
         for idx in indices:
             plt.axvline(x=idx, color='darkblue', linestyle='--', linewidth=1)
         plt.title("Eigenvalues Time Series with Valley Indices")
-        plt.xlabel("Index")
-        plt.ylabel("Eigenvalue")
+        plt.xlabel("Image Index")
+        plt.ylabel("Second Eigenvalue")
         plt.grid(True, linestyle='--', alpha=0.5)
         plt.tight_layout()
         plt.savefig(output_file)

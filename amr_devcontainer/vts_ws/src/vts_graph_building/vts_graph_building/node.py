@@ -13,7 +13,7 @@ class GraphNodeClass:
 
     # Load CLIP model and tokenizer from HuggingFace
     _clip_tokenizer: CLIPTokenizer = CLIPTokenizer.from_pretrained("openai/clip-vit-base-patch32")
-    _clip_text_model: CLIPTextModel = CLIPTextModel.from_pretrained("openai/clip-vit-base-patch32").to(_device)
+    _clip_text_model: CLIPTextModel = CLIPTextModel.from_pretrained("openai/clip-vit-base-patch32", use_safetensors=True).to(_device)
 
     def __init__(self, id: int, pose: tuple[float, float, float],
                  visual_features: np.ndarray, image: np.ndarray, semantics: Optional[np.ndarray] = None) -> None:
