@@ -1,6 +1,9 @@
 ## 🎓 Bachelor Thesis (TFG)
 
-[![Thesis Preview](./thesis/preview.png)](https://github.com/rdgzmanuel/visual_topological_slam/thesis/TFG-Rodriguez_Villegas_Manuel.pdf)
+<a href="https://github.com/rdgzmanuel/visual_topological_slam/raw/main/thesis/TFG-Rodriguez_Villegas_Manuel.pdf">
+  <img src="./thesis/preview.png" alt="Thesis Preview" width="300"/>
+</a>
+
 
 > Click the image to read the full thesis PDF.
 
