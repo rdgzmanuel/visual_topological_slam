@@ -11,6 +11,7 @@ build/
 install/
 log/
 
+# SocialTech
 graphs/
 detectors/
 topological_map/
