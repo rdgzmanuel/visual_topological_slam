@@ -1,9 +1,9 @@
 ## 🎓 Bachelor Thesis (TFG) ~ Visual Topological SLAM using Deep Learning Techniques
 
 <div align="center">
-  <a href="https://github.com/rdgzmanuel/visual_topological_slam/raw/main/thesis/TFG-Rodriguez_Villegas_Manuel.pdf">
-    <img src="./thesis/preview.png" alt="Thesis Preview" width="450"/>
-  </a>
+  <a href="https://rdgzmanuel.github.io/visual_topological_slam/TFG-Rodriguez_Villegas_Manuel.pdf">
+  <img src="./thesis/preview.png" alt="Thesis Preview" width="450"/>
+</a>
 </div>
 
 
