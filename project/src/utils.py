@@ -5,10 +5,15 @@ import tarfile
 import requests
 import shutil
 import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+
 from torchvision import transforms
 from PIL import Image
 from torch.utils.data import Dataset, DataLoader, random_split
 from torch.jit import RecursiveScriptModule
+from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
+
 
 
 class COLDataset(Dataset):
@@ -29,22 +34,31 @@ class COLDataset(Dataset):
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.5], std=[0.5])
         ])
-        
-        labels_correspondence: dict[str, int] = {}
-        class_number: int = 0
+
+        labels_correspondence: dict[str, int] = {
+            "CR": 0,
+            "2PO": 1,
+            "RL": 2,
+            "TL": 3,
+            "TR": 4,
+            "LO": 5,
+            "1PO": 6,
+            "KT": 7,
+            "CNR": 8,
+            "PA": 9,
+            "LAB": 10,
+            "ST": 11
+        }
 
         self.images: list[torch.Tensor] = []
         self.labels: list[int] = []
 
         for image in os.listdir(path):
-            image_splitted: list[str] = image[:-5].split("_")  # Remove the .jpeg
+            image_splitted: list[str] = image[:-5].split("_")
             label_name: str = image_splitted[-1]
-            if label_name not in labels_correspondence:
-                labels_correspondence[label_name] = class_number
-                class_number += 1
 
             image_path: str = os.path.join(path, image)
-            open_image = Image.open(image_path).convert("RGB")  # Ensure it's in RGB mode
+            open_image = Image.open(image_path).convert("RGB")
             tensor_image: torch.Tensor = transform(open_image)
             self.images.append(tensor_image)
             self.labels.append(labels_correspondence[label_name])
@@ -63,29 +77,28 @@ def load_cold_data(
     seq_data_path: str, data_path: str, batch_size: int = 128, num_workers: int = 4, train: bool = True
 ) -> tuple[DataLoader, DataLoader, DataLoader]:
     """
-    This function returns three Dataloaders, one for train data, one for val data and
+    This function prepares three Dataloaders, one for train data, one for val data and
     other for testing data for COLD dataset.
 
     Args:
-        path: path of the dataset.
-        color_space: color_space for loading the images.
-        batch_size: batch size for dataloaders. Default value: 128.and
-        num_workers: number of workers for loading data.
-            Default value: 0.
+        seq_data_path (str): path to the sequencies data.
+        data_path (str): path where images will be stored.
+        batch_size (int, optional): size of batch. Defaults to 128.
+        num_workers (int, optional): number of workers for dataloaders. Defaults to 4.
+        train (bool, optional): whether data is for training or testing. Defaults to True.
 
     Returns:
-        tuple of dataloaders, train, val and test in respective order.
+        tuple[DataLoader, DataLoader, DataLoader]: three dataloaders (train, val, test)
     """
 
-    if not os.path.isdir(f"{seq_data_path}"):
-        os.makedirs(f"{seq_data_path}")
-        download_cold_data(seq_data_path)
+    # if not os.path.isdir(f"{seq_data_path}"):
+        # os.makedirs(f"{seq_data_path}")
+    # download_cold_data(seq_data_path)
     
-    if not os.path.isdir(f"{data_path}"):
-        os.makedirs(f"{data_path}")
-        prepare_data(seq_data_path, data_path)
+    # if not os.path.isdir(f"{data_path}"):
+        # os.makedirs(f"{data_psath}")
+    # prepare_data(seq_data_path, data_path)
 
-    # create datasets
     train_dataloader = None
     val_dataloader = None
     test_dataloader = None
@@ -116,7 +129,7 @@ def download_cold_data(path: str) -> None:
     Downloads and extracts the COLD dataset, keeping only specific subfolders inside each sequence folder.
 
     Args:
-        path: Path to save the dataset.
+        path (str): path to save the dataset.
     """
     
     base_url: str = "https://www.cas.kth.se/COLD/db/"
@@ -191,6 +204,10 @@ def prepare_data(seq_data_path: str, final_data_path: str) -> None:
     - 32 Saarbruecken: 5 for testing
     - 26 Freiburg: 5 for testing
     - 19 Ljubljana: 3 for testing
+
+    Args:
+        seq_data_path (str): path of the sequencies data
+        final_data_path (str): path where images will be stored
     """
     sequences: str = os.listdir(seq_data_path)
     
@@ -209,6 +226,21 @@ def prepare_data(seq_data_path: str, final_data_path: str) -> None:
         "cold-ljubljana_part_a_seq1_sunny1"
     }
 
+    classes: list[str] = [
+        "CR",
+        "2PO",
+        "RL",
+        "TL",
+        "TR",
+        "LO",
+        "1PO",
+        "KT",
+        "CNR",
+        "PA",
+        "LAB",
+        "ST"
+    ]
+
     places_file_name: str = "localization/places.lst"
     camera_folder: str = "std_cam"
 
@@ -225,7 +257,11 @@ def prepare_data(seq_data_path: str, final_data_path: str) -> None:
             for line in file:
                 parts: list[str] = line.strip().split()
                 if len(parts) == 2:
-                    picture_to_class[parts[0]] = parts[1]
+                    concrete_place: str = parts[1]
+                    for class_ in classes:
+                        if class_ in concrete_place:
+                            picture_to_class[parts[0]] = class_
+                            break
 
         train_test: str = "test" if sequence in test_sequences else "train"
         data_folder_path: str = os.path.join(final_data_path, train_test)
@@ -253,8 +289,8 @@ class Accuracy:
     This class tracks the accuracy of predictions.
 
     Attributes:
-        correct (int): Number of correct predictions.
-        total (int): Total number of examples evaluated.
+        correct (int): number of correct predictions.
+        total (int): total number of examples evaluated.
     """
 
     def __init__(self) -> None:
@@ -267,8 +303,8 @@ class Accuracy:
         Updates the count of correct and total predictions.
 
         Args:
-            logits (torch.Tensor): Model outputs of shape [batch, num_classes].
-            labels (torch.Tensor): Ground truth labels of shape [batch].
+            logits (torch.Tensor): model outputs of shape [batch, num_classes].
+            labels (torch.Tensor): ground truth labels of shape [batch].
         """
         predictions: torch.Tensor = logits.argmax(dim=1)
         self.correct += predictions.eq(labels).sum().item()
@@ -279,7 +315,7 @@ class Accuracy:
         Computes the accuracy.
 
         Returns:
-            float: Accuracy as a value between 0 and 1.
+            float: accuracy as a value between 0 and 1.
         """
         return self.correct / self.total if self.total > 0 else 0.0
 
@@ -315,14 +351,17 @@ def load_model(name: str) -> RecursiveScriptModule:
     This function is to load a model from the 'models' folder.
 
     Args:
-        name: name of the model to load.
+        name (str): name of the model to load.
 
     Returns:
-        model in torchscript.
+        RecursiveScriptModule: model in torchscript.
     """
+    model_path: str = f"/workspace/project/models/{name}.pt"
 
-    # define model
-    model: RecursiveScriptModule = torch.jit.load(f"models/{name}.pt")
+    if not os.path.exists(model_path):
+        model_path = f"models/{name}.pt"
+
+    model: RecursiveScriptModule = torch.jit.load(model_path, map_location="cpu")
 
     return model
 
@@ -354,6 +393,81 @@ def set_seed(seed: int) -> None:
 
     return None
 
+def load_tensorboard_scalars(model_dir: str, metric: str) -> tuple[list[int], list[float]]:
+    """
+    Loads scalar data from TensorBoard log files.
+
+    Args:
+        model_dir (str): path to the model's log directory.
+        metric (str): name of the scalar metric to extract.
+
+    Returns:
+        tuple[list[int], list[float]]: steps and corresponding values if metric exists, otherwise None.
+    """
+    event_acc: EventAccumulator = EventAccumulator(model_dir)
+    event_acc.Reload()
+    
+    if metric not in event_acc.Tags()["scalars"]:
+        return None
+
+    events = event_acc.Scalars(metric)
+    steps: list[int] = [e.step for e in events]
+    values: list[float] = [e.value for e in events]
+    
+    return steps, values
+
+
+def plot_images() -> None:
+    images_path: str = "comparison"
+    models: list[str] = ["model_8", "model_13", "cnn_avg_1", "ae_avg_4"]
+
+    model_names: dict[str, str] = {
+        "model_8": "m8_cnn",
+        "model_13": "m13_ae_d",
+        "cnn_avg_1": "cnn_avg_1",
+        "ae_avg_4": "ae_avg_4",
+    }
+
+    colors: list[str] = ["#007acc", "#ff7700", "#33cc33", "#cc33cc"]
+
+    plot_charts(images_path, models, model_names, colors)
+
+    return None
+    
+
+def plot_charts(images_path: str, models: list[str], model_names: dict[str, str], colors: list[str]) -> None:
+    log_dir: str = "runs"
+    image_dir: str = os.path.join("images", images_path)
+    metrics: list[str] = ["train/loss", "train/accuracy", "val/loss", "val/accuracy"]
+
+    os.makedirs(image_dir, exist_ok=True)
+
+    sns.set_style("whitegrid")
+    sns.set_palette("dark")
+
+    for metric in metrics:
+        plt.figure(figsize=(8, 6))
+
+        for i, model in enumerate(models):
+            model_path: str = os.path.join(log_dir, model)
+            data: tuple[list[int], list[float]] = load_tensorboard_scalars(model_path, metric)
+            
+            if data:
+                steps, values = data
+                plt.plot(steps, values, label=model_names[model], linewidth=2.5, markersize=5, color=colors[i])
+
+        plt.title(metric.replace("/", " - ").title(), fontsize=16)
+        plt.xlabel("Epochs", fontsize=14)
+        plt.ylabel("Value", fontsize=14)
+        plt.xticks(fontsize=12)
+        plt.yticks(fontsize=12)
+        plt.legend(fontsize=12, loc="best", frameon=True, fancybox=True, shadow=True)
+        plt.grid(True, linestyle="--", alpha=0.6)
+
+        image_path: str = os.path.join(image_dir, f"{metric.replace('/', '_')}.png")
+        plt.savefig(image_path, dpi=300, bbox_inches="tight")
+        plt.close()
+
 
 if __name__ == "__main__":
 
@@ -361,4 +475,5 @@ if __name__ == "__main__":
     data_path: str = "data"
     # download_cold_data(path)
     # prepare_data(path, data_path)
-    load_cold_data(data_path)
+    # load_cold_data(data_path)
+    plot_images()

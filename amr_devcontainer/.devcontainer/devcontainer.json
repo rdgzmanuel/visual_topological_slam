@@ -1,0 +1,48 @@
+{
+    "name": "ROS2 Humble",
+    "dockerFile": "Dockerfile",
+    "build": {
+        "args": {
+            "WORKSPACE": "${containerWorkspaceFolder}"
+        }
+    },
+    "remoteUser": "ros",
+    "runArgs": [
+        "--network=host",
+        "--add-host=host.docker.internal:host-gateway",
+        "--hostname=humble",
+    ],
+    "forwardPorts": [
+        3389
+    ],
+    "postStartCommand": "sudo service xrdp start",
+    "mounts": [
+        "source=${localWorkspaceFolder}/../project,target=/workspace/project,type=bind"
+    ],
+    "customizations": {
+        "vscode": {
+            "settings": {
+                "terminal.integrated.profiles.linux": {
+                    "bash": {
+                        "path": "bash"
+                    }
+                },
+                "terminal.integrated.defaultProfile.linux": "bash"
+            },
+            "extensions": [
+                "ms-python.python",
+                "ms-azuretools.vscode-docker",
+                "ms-vscode.cpptools",
+                "ajshort.msg",
+                "GitHub.copilot",
+                "gruntfuggly.todo-tree",
+                "mutantdino.resourcemonitor",
+                "njpwerner.autodocstring",
+                "smilerobotics.urdf",
+                "twxs.cmake",
+                "charliermarsh.ruff",
+                "ms-iot.vscode-ros"
+            ]
+        }
+    }
+}

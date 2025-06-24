@@ -1,10 +1,8 @@
-# deep learning libraries
 import torch
 from torch.jit import RecursiveScriptModule
 from torch.utils.data import DataLoader
 import numpy as np
 
-# own modules
 from src.utils import (
     load_cold_data,
     Accuracy,
@@ -12,30 +10,33 @@ from src.utils import (
     set_seed,
 )
 
-# set device
 device: torch.device = (
     torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 )
 
-# set all seeds and set number of threads
 set_seed(42)
 torch.set_num_threads(8)
 
-# static variables
 DATA_PATH: str = "data"
+SEQ_DATA_PATH: str = "seq_data"
 
 
 def main(name: str) -> float:
     """
-    This function is the main program for the testing.
+    This is the main function of the program. Performs accuracy evaluation.
+
+    Args:
+        name (str): name of the model to evaluate.
+
+    Returns:
+        float: accuracy of the model.
     """
 
     test_data: DataLoader
-    _, _, test_data = load_cold_data(DATA_PATH, batch_size=128, train=False)
+    _, _, test_data = load_cold_data(seq_data_path=SEQ_DATA_PATH, data_path=DATA_PATH, batch_size=128, train=False)
 
     model: RecursiveScriptModule = load_model(name).to(device)
 
-    # call test step and evaluate accuracy
     accuracy: float = t_step(model, test_data, device)
 
     return accuracy
@@ -50,12 +51,12 @@ def t_step(
         This function computes the test step.
 
         Args:
-            model: pytorch model.
-            test_data: dataloader of test data.
-            device: device of model.
+            model (torch.nn.Module): pytorch model.
+            test_data (DataLoader): dataloader of test data.
+            device (torch.device): device of model.
             
         Returns:
-            average accuracy.
+            float: average accuracy.
         """
 
         model.eval()
