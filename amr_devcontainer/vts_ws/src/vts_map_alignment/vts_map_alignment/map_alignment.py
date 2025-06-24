@@ -28,7 +28,7 @@ class MapAligner:
 
         # Neighbor finding
         self._pose_weight: float = 0.8
-        self._threshold: float = 4.0
+        self._threshold: float = 2.0
 
         # Image stitching
         self._min_matches: int = 4
@@ -49,8 +49,8 @@ class MapAligner:
             graph_2 (Graph): The secondary graph whose nodes will be integrated.
         """
         self.updated_graph: Graph = copy.deepcopy(graph_1)
-        self.updated_graph.node_id = max(self.updated_graph.nodes.keys()) + 1
-        self._update_graph(graph_2)
+        # self.updated_graph.node_id = max(self.updated_graph.nodes.keys()) + 1
+        # self._update_graph(graph_2)
 
 
     def _update_graph(self, lookup_graph: Graph) -> None:

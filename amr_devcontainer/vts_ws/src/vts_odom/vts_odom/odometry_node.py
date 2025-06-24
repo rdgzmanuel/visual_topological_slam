@@ -1,106 +1,116 @@
 import rclpy
-import os
 from rclpy.node import Node
+from rclpy.timer import Timer
+from geometry_msgs.msg import PoseStamped
+from builtin_interfaces.msg import Time
+import csv
+import os
 
-from vts_msgs.msg import CustomOdometry
-from geometry_msgs.msg import Quaternion
-from vts_odom.odometry import OdometryClass
 
-class OdometryNode(Node):
+class PosePublisher(Node):
+    """
+    A ROS 2 node that publishes geometry_msgs/PoseStamped messages at fixed intervals
+    from a CSV file containing timestamped pose data.
+    """
+
     def __init__(self) -> None:
         """
-        Odometry node initializer.
-        """
-        super().__init__("odometry")
-        self._publisher = self.create_publisher(CustomOdometry, "/odom", 10)
+        Initializes the PosePublisher node.
 
-        self.declare_parameter("trajectory", "default_value")
-        self._trajectory: str = self.get_parameter("trajectory").get_parameter_value().string_value
-        self.odometry: OdometryClass = OdometryClass()
-
-        self._publish_odometry()
-    
-    def _publish_odometry(self) -> None:
+        - Declares and retrieves the path to the odometry CSV file.
+        - Reads the CSV file into memory.
+        - Creates a ROS 2 timer that triggers at 0.2-second intervals.
         """
-        Reads the odometry file and starts a ROS2 timer to publish odometry messages.
-        """
-        seq_data_folder: str = "/workspace/project/seq_data"
-        odometry_folder: str = "odom_scans"
-        odometry_file: str = "odom.tdf"
-        trajectory_folder: str = os.path.join(seq_data_folder, self._trajectory)
-        odometry_path: str = os.path.join(trajectory_folder, odometry_folder, odometry_file)
+        super().__init__("pose_publisher")
+        self.publisher_ = self.create_publisher(PoseStamped, "/pose", 10)
 
-        try:
-            with open(odometry_path, "r") as file:
-                lines: list[str] = file.readlines()
-        except FileNotFoundError:
+        self.declare_parameter("odometry_path", "topological_map/odometry/odometry.csv")
+        odometry_path: str = self.get_parameter("odometry_path").get_parameter_value().string_value
+
+        self.data: list[dict[str, str]] = []
+        self.index: int = 0
+        self.timer: Timer | None = None
+        self.pub_time: float = 0.2
+
+        if not os.path.exists(odometry_path):
             self.get_logger().error(f"Odometry file not found: {odometry_path}")
             return
 
-        if not lines:
-            self.get_logger().error("Odometry file is empty.")
+        try:
+            with open(odometry_path, "r") as csvfile:
+                reader = csv.DictReader(csvfile)
+                self.data = list(reader)
+        except Exception as e:
+            self.get_logger().error(f"Error reading odometry CSV: {e}")
             return
 
-        self.odom_data: list[list[float]] = [list(map(float, line.split())) for line in lines]
-        self.odom_index: int = 0
-        self.timer = self.create_timer(0.1, self._timer_callback)
+        if not self.data:
+            self.get_logger().error("Odometry CSV is empty or has invalid format.")
+            return
 
-    def _timer_callback(self) -> None:
+        self.timer = self.create_timer(self.pub_time, self.timer_callback)
+
+
+    def timer_callback(self) -> None:
         """
-        Timer callback function that publishes odometry messages at regular intervals.
+        Timer callback function that publishes a PoseStamped message.
+
+        Uses the next line of pose data from the loaded CSV file and converts it
+        into a ROS 2 PoseStamped message with the appropriate timestamp and frame.
         """
-        if self.odom_index >= len(self.odom_data):
-            self.get_logger().info("Finished publishing odometry data.")
-            self.timer.cancel()
+        if self.index >= len(self.data):
+            self.get_logger().info("Finished publishing all pose data.")
+            if self.timer:
+                self.timer.cancel()
             return
 
-        line_content: list[float] = self.odom_data[self.odom_index]
+        row: dict[str, str] = self.data[self.index]
 
-        if self.odom_index == 0:
-            self.prev_timestamp: float = float(f"{int(line_content[3])}.{int(line_content[4])}")
-            self.prev_x: float = float(line_content[7])
-            self.prev_y: float = float(line_content[8])
-            self.prev_theta: float = float(line_content[11])
-            self.odom_index += 1
-            return
+        try:
+            timestamp: float = float(row['timestamp'])
+            msg: PoseStamped = PoseStamped()
 
-        timestamp: float = float(f"{int(line_content[3])}.{int(line_content[4])}")
-        x: float = float(line_content[7])
-        y: float = float(line_content[8])
-        theta: float = float(line_content[11])
+            # Convert timestamp to ROS Time
+            sec: int = int(timestamp)
+            nanosec: int = int((timestamp - sec) * 1e9)
+            msg.header.stamp = Time(sec=sec, nanosec=nanosec)
+            msg.header.frame_id = "map"
 
-        time_difference: float = timestamp - self.prev_timestamp
-        v, w = self.odometry._compute_poses(time_difference, x, y, theta, self.prev_x, self.prev_y, self.prev_theta)
+            msg.pose.position.x = float(row["pos_x"])
+            msg.pose.position.y = float(row["pos_y"])
+            msg.pose.position.z = float(row["pos_z"])
 
-        odometry_msg: CustomOdometry = CustomOdometry()
-        odometry_msg.odometry.twist.twist.linear.x = v
-        odometry_msg.odometry.twist.twist.angular.z = w
-        odometry_msg.time_diff = time_difference
+            msg.pose.orientation.x = float(row["orient_x"])
+            msg.pose.orientation.y = float(row["orient_y"])
+            msg.pose.orientation.z = float(row["orient_z"])
+            msg.pose.orientation.w = float(row["orient_w"])
 
-        # self._publisher.publish(odometry_msg)
+            self.publisher_.publish(msg)
+            self.index += 1
 
-        self.prev_timestamp = timestamp
-        self.prev_x = x
-        self.prev_y = y
-        self.prev_theta = theta
-        self.odom_index += 1
+        except Exception as e:
+            self.get_logger().error(f"Failed to publish pose at index {self.index}: {e}")
+            self.index += 1  # Skip problematic line
 
 
 def main(args=None) -> None:
     """
-    Main function to initialize and spin the ROS2 node.
+    Entry point for the ROS 2 node.
+
+    Args:
+        args (list | None): Optional list of command-line arguments.
     """
     rclpy.init(args=args)
-    odometry_node: OdometryNode = OdometryNode()
+    node = PosePublisher()
 
     try:
-        rclpy.spin(odometry_node)
+        rclpy.spin(node)
     except KeyboardInterrupt:
         pass
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
 
-    odometry_node.destroy_node()
-    rclpy.try_shutdown()
 
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

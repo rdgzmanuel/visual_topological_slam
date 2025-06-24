@@ -6,18 +6,18 @@ def generate_launch_description():
     # model_name: str = "m8_cnn_95"
     model_name: str = "m13_ae_97"
 
-    # lab: str = "freiburg_a"
-    # start_1: tuple[float, float, float] = (0.2, 0.0, 0.0)
-    # trajectory_1: str = "cold-freiburg_part_a_seq2_night1"
-    # start_2: tuple[float, float, float] = (2.29, -0.29, 0.0)
-    # trajectory_2: str = "cold-freiburg_part_a_seq2_sunny3"
+    lab: str = "freiburg_a"
+    start_1: tuple[float, float, float] = (0.2, 0.0, 0.0)
+    trajectory_1: str = "cold-freiburg_part_a_seq2_night1"
+    start_2: tuple[float, float, float] = (2.29, -0.29, 0.0)
+    trajectory_2: str = "cold-freiburg_part_a_seq2_sunny3"
 
 
-    lab: str = "freiburg_ext"
-    start_1: tuple[float, float, float] = (0.29, 0.0, 0.0)
-    trajectory_1: str = "cold-freiburg_part_b_seq3_sunny1"
-    start_2: tuple[float, float, float] = (0.46, -0.02, -0.11)
-    trajectory_2: str = "cold-freiburg_part_b_seq3_cloudy3"
+    # lab: str = "freiburg_ext"
+    # start_1: tuple[float, float, float] = (0.29, 0.0, 0.0)
+    # trajectory_1: str = "cold-freiburg_part_b_seq3_sunny1"
+    # start_2: tuple[float, float, float] = (0.46, -0.02, -0.11)
+    # trajectory_2: str = "cold-freiburg_part_b_seq3_cloudy3"
 
 
     # lab: str = "saarbruecken_a"
@@ -32,6 +32,18 @@ def generate_launch_description():
     # trajectory_1: str = "cold-saarbruecken_part_b_seq4_cloudy1"
     # start_2: tuple[float, float, float] = (0.27, 0.00, 0.00)
     # trajectory_2: str = "cold-saarbruecken_part_b_seq4_sunny1"
+
+    # lab: str = "mapa_icai"
+    # start_1: tuple[float, float, float] = (0.01, 4.0, 0.0)
+    # trajectory_1: str = "first_trajectory"
+    # start_2: tuple[float, float, float] = (0.46, -0.02, -0.11)
+    # trajectory_2: str = "cold-freiburg_part_b_seq3_cloudy3"
+
+    # lab: str = "competition"
+    # start_1: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    # trajectory_1: str = "first_trajectory"
+    # start_2: tuple[float, float, float] = (0.46, -0.02, -0.11)
+    # trajectory_2: str = "cold-freiburg_part_b_seq3_cloudy3"
 
 
     # lab: str = "ljubljana"
@@ -78,6 +90,22 @@ def generate_launch_description():
                         0.00247, -0.001639, -0.1432, 0.0684, 3.786, -0.4859),
             "ext_rewiring": True
         },
+        "mapa_icai": {
+            "world_limits": (-30.87, 24.54, -5.04, 51.28),
+            "map_name": "mapa_icai.png",
+            "origin": (810, 1159),
+            "weights": (1.907e-05, 0.0004256, - 0.03284, 0.3959, 0.03245, 0.02404,
+                        3.72e-07, - 2.489e-05, - 0.0004327, 0.0565, 0.02087, 2.286),
+            "ext_rewiring": False
+        },
+        "competition": {
+            "world_limits": (-1.93, 11.48, -5.18, 7),
+            "map_name": "competition.jpg",
+            "origin": (520, 853),
+            "weights": (1.907e-05, 0.0004256, - 0.03284, 0.3959, 0.03245, 0.02404,
+                        3.72e-07, - 2.489e-05, - 0.0004327, 0.0565, 0.02087, 2.286),
+            "ext_rewiring": False
+        },
     }
 
     mode: str = "manual"
@@ -95,13 +123,13 @@ def generate_launch_description():
             #                  "map_name": settings[lab]["map_name"], "origin": settings[lab]["origin"],
             #                  "weights": settings[lab]["weights"], "trajectory_1": trajectory_1, "ext_rewiring": settings[lab]["ext_rewiring"],
             #                  "trajectory_2": trajectory_2, "model_name": model_name, "publishing_topic": "graph_building_1"}]),
-            # Node(
-            #     package="vts_camera",
-            #     executable="camera",
-            #     output="screen",
-            #     arguments=["--ros-args", "--log-level", "WARN"],
-            #     parameters=[{"trajectory_1": trajectory_1, "trajectory_2": trajectory_2, "model_name": model_name}],
-            # ),
+            Node(
+                package="vts_camera",
+                executable="camera",
+                output="screen",
+                arguments=["--ros-args", "--log-level", "WARN"],
+                parameters=[{"trajectory_1": trajectory_1, "trajectory_2": trajectory_2, "model_name": model_name}],
+            ),
             # Node(
             #     package="vts_map_alignment",
             #     executable="graph_alignment",
@@ -110,13 +138,13 @@ def generate_launch_description():
             #     parameters=[{"trajectory": f"{trajectory_1}__{trajectory_2}", "model_name": model_name,
             #                  "world_limits": settings[lab]["world_limits"], "origin": settings[lab]["origin"],
             #                  "map_name": settings[lab]["map_name"]}]),
-            Node(
-                package="vts_commands",
-                executable="commands",
-                output="screen",
-                arguments=["--ros-args", "--log-level", "WARN"],
-                parameters=[{"trajectory_1": trajectory_1, "trajectory_2": trajectory_2, "model_name": model_name,
-                             "map_name": settings[lab]["map_name"], "mode": mode}],
-            ),
+            # Node(
+            #     package="vts_commands",
+            #     executable="commands",
+            #     output="screen",
+            #     arguments=["--ros-args", "--log-level", "WARN"],
+            #     parameters=[{"trajectory_1": trajectory_1, "trajectory_2": trajectory_2, "model_name": model_name,
+            #                  "map_name": settings[lab]["map_name"], "mode": mode}],
+            # ),
         ]
     )

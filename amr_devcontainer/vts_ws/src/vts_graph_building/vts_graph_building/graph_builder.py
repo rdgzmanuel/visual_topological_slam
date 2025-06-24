@@ -77,15 +77,15 @@ class GraphBuilder:
 
         # rewiring
         self._ext_rewiring: bool = ext_rewiring
-        self._rewiring_threshold: float = 3.0 # 3.0 fA 1.25 sA   4.0 fE  4.25 sE
-        self._external_rewiring_threshold: float = 2.5 # 2.5 fA 1.0 sA   3.5 fE   4.0 sE
-        self._hard_threshold: float = 0.7 # 0.7 fAE  0.55 sA 
-        self._min_rewire_nodes: int = 3
+        self._rewiring_threshold: float = 1.0 # 3.0 fA 1.25 sA   4.0 fE  4.25 sE
+        self._external_rewiring_threshold: float = 0.75 # 2.5 fA 1.0 sA   3.5 fE   4.0 sE
+        self._hard_threshold: float = 0.4 # 0.7 fAE  0.55 sA 
+        self._min_rewire_nodes: int = 4
 
         self._logger = rclpy.logging.get_logger('GraphBuilder')
 
 
-    def update_pose(self, v: float, w: float, time_difference: float) -> None:
+    def update_pose(self, pose: tuple[float, float, float], image_name: str) -> None:
         """
         Updates current pose of the system with odometry measurements.
 
@@ -94,80 +94,26 @@ class GraphBuilder:
             w (float): Angular velocity.
             time_difference (float): Time difference between previous and current pose.
         """
-        if self.steps == 0:
-            prev_x, prev_y, prev_theta = self._initial_pose
-        else:
-            prev_x, prev_y, prev_theta = self.current_pose
-
-        x: float = prev_x + v * np.cos(prev_theta + (w * time_difference) / 2) * time_difference
-        y: float = prev_y + v * np.sin(prev_theta + (w * time_difference) / 2) * time_difference
-        theta: float = prev_theta + w * time_difference
-
-        # Normalize theta to be in the range [-π, π]
-        theta = (theta + np.pi) % (2 * np.pi) - np.pi
-
-        self.current_pose = (x, y, theta)
-        self.steps += 1
-
-        self._plot_node_on_map(self.current_pose, node=False)
-
-        return None
-
-
-    def new_update_pose(self, image_name: str) -> None:
-        """
-        Upgrades system's pose using directly images names and performing a transformaton.
-
-        Args:
-            image_name (str): _description_
-        """
         self._current_image: np.ndarray = self._convert_image(image_name)
-
-        splitted_msg: list[str] = image_name.split("_")
-        x: float = float(splitted_msg[1][1:])
-        x = self._weights[0] * (x**5) + self._weights[1] * (x**4) + self._weights[2] * (x**3)\
-            + self._weights[3] * (x**2) + self._weights[4] * x + self._weights[5]
-        y: float = float(splitted_msg[2][1:])
-        y = self._weights[6] * (y**5) + self._weights[7] * (y**4) + self._weights[8] * (y**3)\
-            + self._weights[9] * (y**2) + self._weights[10] * y + self._weights[11]
-        # self._logger.warn("pre norml")
-        theta: float = self._normalize_angle(float(splitted_msg[3][1:5]))
-
-        self.current_pose = (x, y, theta)
-        # self._logger.warn("pre plot")
-        self._plot_node_on_map(self.current_pose, node=False)
-        # self._logger.warn("post plot")
-        self.steps += 1
-
-
-    def update_pose_odom(self, image_name: str, new_pose: tuple[float, float, float]) -> None:
-        """
-        Upgrades system's pose using directly images names and performing a transformaton.
-
-        Args:
-            image_name (str): _description_
-        """
-        self._current_image: np.ndarray = self._convert_image(image_name)
-        # self._logger.warn("post convrt")
 
         x: float
         y: float
         theta: float
-        x, y, theta = new_pose
+        x, y, theta = pose
 
-        x = self._weights[0] * (x**5) + self._weights[1] * (x**4) + self._weights[2] * (x**3)\
-            + self._weights[3] * (x**2) + self._weights[4] * x + self._weights[5]
+        # x = self._weights[0] * (x**5) + self._weights[1] * (x**4) + self._weights[2] * (x**3)\
+        #     + self._weights[3] * (x**2) + self._weights[4] * x + self._weights[5]
 
-        y = self._weights[6] * (y**5) + self._weights[7] * (y**4) + self._weights[8] * (y**3)\
-            + self._weights[9] * (y**2) + self._weights[10] * y + self._weights[11]
+        # y = self._weights[6] * (y**5) + self._weights[7] * (y**4) + self._weights[8] * (y**3)\
+        #     + self._weights[9] * (y**2) + self._weights[10] * y + self._weights[11]
 
         theta = self._normalize_angle(float(theta))
 
         self.current_pose = (x, y, theta)
-        # self._logger.warn("pre plot")
         self._plot_node_on_map(self.current_pose, node=False)
-        # self._logger.warn("post plot")
         self.steps += 1
+
+        return None
 
 
     def _convert_image(self, image_name: str) -> np.ndarray:
@@ -180,13 +126,11 @@ class GraphBuilder:
         Returns:
             np.ndarray: np.ndarray representation of the image.
         """
-        image_path: str = os.path.join(self._images_path, image_name)
+        image_path: str = os.path.join("competition/images", image_name)
         image: np.ndarray = cv2.imread(image_path, cv2.IMREAD_COLOR)
 
         if self._current_image is None and image is not None:
-            # self._logger.warn(f"path {image_path}")
             self._image_shape = image.shape
-        # self._logger.warn("pre resize")
 
         if self._image_shape is not None:
             image = cv2.resize(image, (self._image_shape[1], self._image_shape[0]))
@@ -444,6 +388,9 @@ class GraphBuilder:
 
         new_node: GraphNodeClass = GraphNodeClass(id=self._node_id, pose=representative[1],
                                             visual_features=representative[0], image=representative[2])
+        
+        self._logger.warn(f"new pose: {new_node.pose}, node id: {new_node.id}")
+        # self._logger.warn(f"node image {new_node.image}")
 
         if self.current_node is None:
             self._node_id += 1
@@ -451,7 +398,7 @@ class GraphBuilder:
             # self._logger.warn(f"New embeddings: {new_node.semantics}")
             self.current_node = new_node
             # self._logger.warn(f"NEW CURRENT INITIAL UPDATE {self.current_node.pose}")
-            # self._plot_node_on_map(self.current_node.pose)
+            self._plot_node_on_map(self.current_node.pose)
 
         else:
             closest_neighbor: GraphNodeClass = self._search_closest_neighbor(new_node.pose, new_node.visual_features)
@@ -494,7 +441,7 @@ class GraphBuilder:
                 self.current_node.neighbors.add(new_node)
                 self.current_node = new_node
                 # self._logger.warn(f"NEW CURRENT {self.current_node.pose}")
-                # self._plot_node_on_map(self.current_node.pose)
+                self._plot_node_on_map(self.current_node.pose)
                 # self._logger.warn("finish update")
             # self._logger.warn(f"----")
 
@@ -551,6 +498,7 @@ class GraphBuilder:
             closets_neighbor (GraphNodeClass): _description_
         """
         # new_pose = self._average_pose(closest_neighbor.pose, new_node.pose)
+        self._logger.warn(f"{closest_neighbor.id}, {closest_neighbor.pose}")
         new_image: np.ndarray = self.stitch_images(closest_neighbor.image, new_node.image,
                                             min_matches=self._min_matches)
         new_image = cv2.resize(new_image, (self._image_shape[1], self._image_shape[0]))
@@ -937,16 +885,16 @@ class GraphBuilder:
         if self.steps != 0:
             map_folder = output_path
 
+        # map_img = self.draw_axes_with_scale_from_path("images/maps/mapa_icai.jpg")
+
         map_img = cv2.imread(map_folder)
 
         y, x, _ = pose  # Ignore theta for now
         px, py = self.world_to_pixel(-x, y, map_img.shape, self._world_limits, self._origin)
-        # self._logger.warn("post world")
         if node:
             cv2.circle(map_img, (px, py), 5, (0, 0, 255), -1)
         else:
             cv2.circle(map_img, (px, py), 1, (255, 0, 0), -1)
-        # self._logger.warn(f"pre write {output_path}")
         cv2.imwrite(output_path, map_img)
         # self._logger.warn("post write")
         return None
@@ -955,8 +903,73 @@ class GraphBuilder:
     def plot_points(self) -> None:
         nodes = [(0.0, 0.0, 0.0), (-15, -15, 0), (-5, -15, 0), (5, -15, 0), (15, -15, 0),
                  (-20, -10, 0), (-20, -5, 0), (-20, 5, 0), (-20, 0, 0), (-20, 10, 0), (-20, -15, 0)]
+
         for node in nodes:
             self._plot_node_on_map(node)
+    
+
+    # def draw_axes_with_scale_from_path(self, image_path, origin=(810, 1159), 
+    #                                x_scale=26.2369, y_scale=-22.6,
+    #                                x_range=(-30.87, 24.54), y_range=(-5.04, 51.28),
+    #                                tick_interval=5):
+
+    def draw_axes_with_scale_from_path(self, image_path, origin=(520, 853), 
+                                   x_scale=-74.3, y_scale=-74.3,
+                                   x_range=(-1.93, 11.48), y_range=(-5.18, 7),
+                                   tick_interval=2.5, output_path=None):
+        #` Load image
+        image = cv2.imread(image_path)
+        if image is None:
+            raise FileNotFoundError(f"Could not load image from: {image_path}")
+        
+        image = image.copy()
+        height, width = image.shape[:2]
+        x0, y0 = origin
+
+        font = cv2.FONT_HERSHEY_SIMPLEX
+
+        # ---------- Draw origin axes ----------
+        # X-axis (goes up)
+        cv2.arrowedLine(image, (x0, y0), (x0, int(y0 + 100 * np.sign(x_scale))), (0, 0, 255), 2, tipLength=0.05)
+        # Y-axis (goes left)
+        cv2.arrowedLine(image, (x0, y0), (int(x0 + 100 * np.sign(y_scale)), y0), (0, 255, 0), 2, tipLength=0.05)
+
+        # ---------- X-axis (vertical axis, now up) ----------
+        for val in np.arange(x_range[0], x_range[1] + tick_interval, tick_interval):
+            py = int(y0 + val * x_scale)  # vertical position
+            if 0 <= py < height:
+                cv2.line(image, (x0 - 5, py), (x0 + 5, py), (0, 0, 0), 2)
+                label = f"{val:.0f}"
+                text_size = cv2.getTextSize(label, font, 0.5, 1)[0]
+                pos = (x0 + 8, py + text_size[1] // 2)
+                cv2.putText(image, label, pos, font, 0.5, (255, 255, 255), 3, cv2.LINE_AA)
+                cv2.putText(image, label, pos, font, 0.5, (0, 0, 0), 1, cv2.LINE_AA)
+
+        # ---------- Y-axis (horizontal axis, now left) ----------
+        for val in np.arange(y_range[0], y_range[1] + tick_interval, tick_interval):
+            px = int(x0 + val * y_scale)  # horizontal position
+            if 0 <= px < width:
+                cv2.line(image, (px, y0 - 5), (px, y0 + 5), (0, 0, 0), 2)
+                label = f"{val:.0f}"
+                text_size = cv2.getTextSize(label, font, 0.5, 1)[0]
+                pos = (px - text_size[0] // 2, y0 + 15)
+                cv2.putText(image, label, pos, font, 0.5, (255, 255, 255), 3, cv2.LINE_AA)
+                cv2.putText(image, label, pos, font, 0.5, (0, 0, 0), 1, cv2.LINE_AA)
+
+        # Draw full vertical and horizontal axes
+        cv2.line(image, (x0, 0), (x0, height), (0, 0, 0), 2)  # X-axis (vertical)
+        cv2.line(image, (0, y0), (width, y0), (0, 0, 0), 2)   # Y-axis (horizontal)
+
+        # ---------- Save image ----------
+        if output_path is None:
+            output_path = image_path.replace(".", "_with_axes.")
+
+        success = cv2.imwrite(output_path, image)
+        if not success:
+            raise IOError(f"Failed to save image to: {output_path}")
+
+        return image
+
 
 
     def find_best_fit_function(self, x, y, degree=5):

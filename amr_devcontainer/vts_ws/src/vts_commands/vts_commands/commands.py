@@ -2,6 +2,9 @@ import torch
 import rclpy
 import pickle
 import os
+import base64
+import json
+import cv2
 import numpy as np
 from deep_translator import GoogleTranslator
 from vts_map_alignment.graph_class import Graph
@@ -56,6 +59,43 @@ class Commander:
 
         with open(filename, "rb") as f:
             graph = pickle.load(f)
+
+        return graph
+    
+
+    def load_graph_from_json(filename: str) -> Graph:
+        with open(filename, 'r') as f:
+            graph_data = json.load(f)
+
+        graph = Graph()
+        graph.node_id = graph_data["node_id"]
+        graph.edges = [tuple(edge) for edge in graph_data["edges"]]
+
+        id_to_node = {}
+
+        for node_info in graph_data["nodes"]:
+            visual = decode_array(node_info["visual_features"]["data"],
+                                tuple(node_info["visual_features"]["shape"]),
+                                node_info["visual_features"]["dtype"])
+
+            semantics = decode_array(node_info["semantics"]["data"],
+                                    tuple(node_info["semantics"]["shape"]),
+                                    node_info["semantics"]["dtype"])
+
+            image = decode_image(node_info["image"])
+
+            node = GraphNodeClass(id=node_info["id"],
+                                pose=tuple(node_info["pose"]),
+                                visual_features=visual,
+                                image=image,
+                                semantics=semantics)
+
+            graph.nodes[node.id] = node
+            id_to_node[node.id] = node
+
+        # Set current node
+        current_id = graph_data["current_node_id"]
+        graph.current_node = id_to_node.get(current_id, None)
 
         return graph
 
@@ -134,3 +174,11 @@ class Commander:
             embeddings = embeddings / embeddings.norm(dim=-1, keepdim=True)
 
         return embeddings.cpu().numpy().squeeze()
+
+
+def decode_array(data: str, shape: tuple, dtype: str) -> np.ndarray:
+    return np.frombuffer(base64.b64decode(data), dtype=dtype).reshape(shape)
+
+def decode_image(data: str) -> np.ndarray:
+    buffer = base64.b64decode(data)
+    return cv2.imdecode(np.frombuffer(buffer, np.uint8), cv2.IMREAD_COLOR)

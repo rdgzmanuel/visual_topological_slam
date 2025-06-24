@@ -7,10 +7,8 @@ import sys
 import numpy as np
 import speech_recognition as sr
 from deep_translator import GoogleTranslator
-from vts_map_alignment.graph_class import Graph
 from vts_graph_building.node import GraphNodeClass
 from vts_commands.commands import Commander
-from vts_msgs.msg import CommandMessage
 from std_msgs.msg import Float32MultiArray
 from typing import Optional
 from rclpy.node import Node

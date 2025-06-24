@@ -3,6 +3,9 @@ import rclpy
 import os
 import pickle
 import sys
+import json
+import cv2
+import base64
 from rclpy.node import Node
 from collections import deque
 from typing import Deque
@@ -33,9 +36,9 @@ class GraphAlignment(Node):
         world_limits: tuple[float, float, float, float] = tuple(self.get_parameter("world_limits").
                                                                  get_parameter_value().double_array_value.tolist())
 
-        # self._graph_subscriber = self.create_subscription(
-        #     FullGraph, "/graph_alignment", self.graph_message_callback, 10
-        # )
+        self._graph_subscriber = self.create_subscription(
+            FullGraph, "/graph_alignment", self.graph_message_callback, 10
+        )
 
         self._graph_publisher = self.create_publisher(CommandMessage, "/commands", 10)
 
@@ -43,7 +46,7 @@ class GraphAlignment(Node):
 
         self._map_aligner: MapAligner = MapAligner(model_name, trajectory, world_limits, origin, self._map_name)
 
-        self._start_directly()
+        # self._start_directly()
 
 
     def _start_directly(self) -> None:
@@ -66,16 +69,16 @@ class GraphAlignment(Node):
         self.get_logger().warn("Received a graph")
 
         first_graph: str = "graph_1.pkl"
-        second_graph: str = "graph_2.pkl"
+        # second_graph: str = "graph_2.pkl"
         path: str = f"graphs/{self._map_name[:-4]}"
         
-        if len(self._graph_queue) == 2:
-            self.get_logger().warn("Received two graphs. Starting alignment...")
+        # if len(self._graph_queue) == 2:
+        self.get_logger().warn("Received two graphs. Starting alignment...")
 
-            graph_1: list[tuple[GraphNodeClass, GraphNodeClass]] = self.load_graph_data(os.path.join(path, first_graph))
-            graph_2: list[tuple[GraphNodeClass, GraphNodeClass]] = self.load_graph_data(os.path.join(path, second_graph))
+        graph_1: list[tuple[GraphNodeClass, GraphNodeClass]] = self.load_graph_data(os.path.join(path, first_graph))
+        # graph_2: list[tuple[GraphNodeClass, GraphNodeClass]] = self.load_graph_data(os.path.join(path, second_graph))
 
-            self.graphs_callback(graph_1, graph_2)
+        self.graphs_callback(graph_1, [])
 
 
     def graphs_callback(self, graph_list_1: list[tuple[GraphNodeClass, GraphNodeClass]],
@@ -86,7 +89,8 @@ class GraphAlignment(Node):
         self.get_logger().warn("Processing graphs")
 
         graph_1: Graph = self._process_graph(graph_list_1)
-        graph_2: Graph = self._process_graph(graph_list_2)
+        # graph_2: Graph = self._process_graph(graph_list_2)
+        graph_2 = []
 
         self.get_logger().warn("Aligning graphs")
         self._map_aligner.align_graphs(graph_1, graph_2)
@@ -176,13 +180,65 @@ class GraphAlignment(Node):
         """
         Saves the graph and edges data to a file using pickle (binary format).
         """
-        # filename: str = "final_graph.pkl"
-        # filename = os.path.join(f"graphs/{self._map_name[:-4]}", filename)
+        filename: str = "final_graph.json"
+        filename = os.path.join(f"graphs/{self._map_name[:-4]}", filename)
 
-        # with open(filename, "wb") as f:
-        #     pickle.dump(graph, f)
+        self.save_graph_to_json(graph, filename=filename)
+
+        with open(filename, "wb") as f:
+            pickle.dump(graph, f)
 
         self.get_logger().warn("Graph saving done with pickle")
+        
+
+    def save_graph_to_json(self, graph: Graph, filename: str) -> None:
+        os.makedirs(os.path.dirname(filename), exist_ok=True)
+
+        graph_dict = {
+            "node_id": graph.node_id,
+            "edges": graph.edges,
+            "current_node_id": graph.current_node.id if graph.current_node else None,
+            "nodes": []
+        }
+
+        for node in graph.nodes.values():
+            visual_encoded, vshape, vdtype = encode_array(node.visual_features)
+            semantics_encoded, sshape, sdtype = encode_array(node.semantics)
+            image_encoded = encode_image(node.image)
+
+            graph_dict["nodes"].append({
+                "id": node.id,
+                "pose": node.pose,
+                "visual_features": {
+                    "data": visual_encoded,
+                    "shape": vshape,
+                    "dtype": vdtype
+                },
+                "semantics": {
+                    "data": semantics_encoded,
+                    "shape": sshape,
+                    "dtype": sdtype
+                },
+                "image": image_encoded
+            })
+
+        with open(filename, 'w') as f:
+            json.dump(graph_dict, f)
+
+    
+def encode_array(arr: np.ndarray) -> str:
+    return base64.b64encode(arr.tobytes()).decode("utf-8"), arr.shape, str(arr.dtype)
+
+def decode_array(data: str, shape: tuple, dtype: str) -> np.ndarray:
+    return np.frombuffer(base64.b64decode(data), dtype=dtype).reshape(shape)
+
+def encode_image(image: np.ndarray) -> str:
+    _, buffer = cv2.imencode('.jpg', image)
+    return base64.b64encode(buffer).decode('utf-8')
+
+def decode_image(data: str) -> np.ndarray:
+    buffer = base64.b64decode(data)
+    return cv2.imdecode(np.frombuffer(buffer, np.uint8), cv2.IMREAD_COLOR)
 
 
 def main(args: list[str] = None) -> None:

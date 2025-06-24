@@ -3,7 +3,7 @@ import sys
 import pickle
 import os
 import bisect
-import gc
+import csv
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -11,8 +11,9 @@ import numpy as np
 import time
 from rclpy.node import Node
 from vts_msgs.msg import ImageTensor, GraphNode, FullGraph
-from geometry_msgs.msg import Quaternion
+from tf_transformations import euler_from_quaternion
 from vts_graph_building.graph_builder import GraphBuilder
+from typing import Optional
 
 
 class GraphBuilderNode(Node):
@@ -26,13 +27,13 @@ class GraphBuilderNode(Node):
         self.declare_parameter("n", 30)
         self._n: int = self.get_parameter("n").get_parameter_value().integer_value
 
-        self.declare_parameter("gamma_proportion", 0.5) # lower bound for peaks 0.5   0.4 fE sE
+        self.declare_parameter("gamma_proportion", 0.35) # lower bound for peaks 0.5   0.4 fE sE
         self._gamma_proportion: float = self.get_parameter("gamma_proportion").get_parameter_value().double_value
 
-        self.declare_parameter("delta_proportion", 0.11) # minimum difference of the a. c. between consecutive peaks 0.11 / 0.09  fE sE
+        self.declare_parameter("delta_proportion", 0.085) # minimum difference of the a. c. between consecutive peaks 0.11 / 0.09  fE sE
         self._delta_proportion: float = self.get_parameter("delta_proportion").get_parameter_value().double_value
 
-        self.declare_parameter("distance_threshold", 3.5) # 3.5 fA   2.0 fE  4.0 sE  3.0 sA
+        self.declare_parameter("distance_threshold", 1.0) # 3.5 fA   2.0 fE  4.0 sE  3.0 sA
         self._distance_threshold: float = self.get_parameter("distance_threshold").get_parameter_value().double_value
 
         self.declare_parameter("start_1", (0.0, 0.0, 0.0))
@@ -79,8 +80,8 @@ class GraphBuilderNode(Node):
         self.graph_builder: GraphBuilder = self._create_graph_builder(trajectory=self._trajectory_1,
                                                                       start=self._start_1,)
 
-        self._last_image_time = time.time()
         self._timeout_seconds: int = 20
+        self._last_image_time = time.time()
 
         self._timer = self.create_timer(1.0, self._check_timeout)
 
@@ -88,42 +89,40 @@ class GraphBuilderNode(Node):
 
         self._valley_indices: list[int] = []
 
-        # self._publish_loaded_graphs()
 
-        # self._create_odometry_list(self._trajectory_1)
-    
-
-    def _create_odometry_list(self, trajectory: str) -> None:
-        """
-        Creates odometry list for pose tracking.
-
-        Args:
-            trajectory: Name of the trajectory subfolder to process.
-        """
+        # Odometry
+        self._odometry_path: str = "competition/odometry/odometry.csv"
         self._timestamps: list[float] = []
         self._poses: list[tuple[float, float, float]] = []
+        self._current_timestamp: float = 0.0
 
-        seq_data_folder: str = "/workspace/project/seq_data"
-        scans_folder: str = "odom_scans"
-        trajectory_folder: str = os.path.join(seq_data_folder, trajectory)
-        scan_path: str = os.path.join(trajectory_folder, scans_folder)
-        odometry_file: str = os.path.join(scan_path, "odom.tdf")
+        self._load_odometry_data()
 
-        with open(odometry_file, "r") as f:
-            for line in f:
-                parts: list[str] = line.strip().split()
-                if len(parts) < 11:
-                    continue
-                t_sec: int = int(parts[3])
-                t_usec: int = int(parts[4])
-                timestamp: float = t_sec + t_usec * 1e-6
-                x: float = float(parts[8])
-                y: float = float(parts[9])
-                theta: float = float(parts[11])
-                self._timestamps.append(timestamp)
-                self._poses.append((x, y, theta))
 
-        return None
+    def _load_odometry_data(self) -> None:
+        """
+        Loads the odometry CSV and stores timestamp-sorted poses and their timestamps.
+        """
+        try:
+            with open(self._odometry_path, "r") as csvfile:
+                reader = csv.DictReader(csvfile)
+                for row in reader:
+                    timestamp = float(row["timestamp"])
+                    # Extract position
+                    x: float = float(row["pos_x"])
+                    y: float = float(row["pos_y"])
+
+                    # Extract orientation (quaternion)
+                    qx: float = float(row["orient_x"])
+                    qy: float = float(row["orient_y"])
+                    qz: float = float(row["orient_z"])
+                    qw: float = float(row["orient_w"])
+
+                    _, _, theta = euler_from_quaternion([qx, qy, qz, qw])
+                    self._timestamps.append(timestamp)
+                    self._poses.append((x, y, theta))
+        except Exception as e:
+            self.get_logger().error(f"Error loading odometry data: {e}")
 
 
     def _create_graph_builder(self, trajectory: str, start: tuple[float, float, float]) -> GraphBuilder:
@@ -145,6 +144,16 @@ class GraphBuilderNode(Node):
         Args:
             camera_msg (ImageTensor): Camera message containing tensor and shape data.
         """
+        # self.get_logger().warn(f"image received")
+        # self.graph_builder.plot_points()
+
+        # x = [4, 4.29, 6.97, 27.35, 37.23, 39.84, 42.13]
+        # y = [4, 2.5, 5.1, 28, 38, 39.84, 42.13]
+
+        # poly = self.graph_builder.find_best_fit_function(x, y)
+        # self.get_logger().warn(f" received")
+
+        # self.graph_builder.draw_axes_with_scale_from_path("images/maps/competition.jpg")
 
         self._last_image_time = time.time()
 
@@ -152,7 +161,12 @@ class GraphBuilderNode(Node):
         data: list[float] = camera_msg.data
         image_name: str = camera_msg.image_name
 
-        self.graph_builder.new_update_pose(image_name)
+        self._update_current_timestamp(image_name)
+
+        pose = self._get_closest_pose(self._current_timestamp)
+
+        self.graph_builder.update_pose(pose, image_name)
+
         array_data: np.ndarray = np.array(data).astype("float32")
         self.graph_builder.update_matrices(array_data)        
 
@@ -166,6 +180,20 @@ class GraphBuilderNode(Node):
             
             elif len(self.graph_builder.graph) > 1:
                 self.graph_builder.check_pose()
+    
+        return None
+    
+
+    def _update_current_timestamp(self, image_name: str) -> None:
+        """
+        
+
+        Args:
+            image_name (str): _description_
+        """
+        self._current_timestamp = float(image_name[:-4].replace("_", "."))
+
+        return None
 
 
     def _get_closest_pose(self, query_time: float) -> tuple[float, float, float]:
@@ -239,7 +267,6 @@ class GraphBuilderNode(Node):
         plt.close()
 
 
-
     def _save_graph_data(self, graph: list[tuple[GraphNode, GraphNode]], first: bool):
         """
         Saves the graph and edges data to a file using pickle (binary format).
@@ -251,25 +278,6 @@ class GraphBuilderNode(Node):
             pickle.dump(graph, f)
 
         self.get_logger().warn("Graph saving done with pickle")
-       
-
-    def _reset_graph_builder_for_second_trajectory(self):
-        """
-        Resets the graph builder for processing the second trajectory by creating a new instance.
-        """
-
-        self.get_logger().warn("First trajectory complete. Starting to process the second trajectory...")
-        del self.graph_builder
-
-        gc.collect()
-        time.sleep(3)  # To let current builder to finish its tasks
-
-        self.get_logger().warn("builder created")
-        # self._create_odometry_list(self._trajectory_2)
-        self.graph_builder = self._create_graph_builder(self._trajectory_2, self._start_2)
-        self._is_first_trajectory = False
-
-        self.get_logger().warn("Reset succesful")
 
 
     def _check_timeout(self) -> None:
@@ -283,7 +291,6 @@ class GraphBuilderNode(Node):
                 
                 self.graph_builder.generate_map()
                 self._publish_graph()
-                self._reset_graph_builder_for_second_trajectory()
                 self._last_image_time = time.time()
                 self.get_logger().warn("Ready to start processing second trajectory.")
             else:
