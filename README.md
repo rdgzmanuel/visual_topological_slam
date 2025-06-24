@@ -2,9 +2,8 @@
 
 <div align="center">
   <a href="https://github.com/rdgzmanuel/visual_topological_slam/raw/main/thesis/TFG-Rodriguez_Villegas_Manuel.pdf">
-    <img src="./thesis/preview.png" alt="Thesis Preview" width="300"/>
+    <img src="./thesis/preview.png" alt="Thesis Preview" width="450"/>
   </a>
-  <p><strong><a href="https://github.com/rdgzmanuel/visual_topological_slam/raw/main/thesis/TFG-Rodriguez_Villegas_Manuel.pdf">📄 Click here to download the thesis</a></strong></p>
 </div>
 
 
