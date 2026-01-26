@@ -1,328 +1,200 @@
 import torch
-import torchvision.models as models
 import torch.nn as nn
-from torchvision.models import ResNet101_Weights
 
 
-class CNNExtractor(nn.Module):
+class VisualEncoderDINO(nn.Module):
     """
-    CNN feature extractor using a ResNet101 backbone.
+    Visual encoder using DINOv2 backbone for compact place recognition features.
+    DINOv2 provides superior semantic understanding and spatial relationships.
     """
-    def __init__(self, output_size: int = 12, dropout: float = 0.5) -> None:
+
+    def __init__(
+        self,
+        embedding_dim: int = 128,
+        dropout: float = 0.3,
+        dino_model: str = "dinov2_vits14",  # or "dinov2_vitb14", "dinov2_vitl14"
+    ) -> None:
         """
-        Constructor for CNNExtractor class.
+        Constructor of the VisualEncoderDINO class.
 
         Args:
-            output_size (int): Number of output classes.
-            dropout (float): Dropout rate for regularization.
+            embedding_dim: dimension of the output embedding (32-128 recommended).
+            dropout: dropout probability for regularization.
+            dino_model: which DINOv2 model variant to use:
+                - dinov2_vits14: small, 384 dim, fastest
+                - dinov2_vitb14: base, 768 dim, good balance
+                - dinov2_vitl14: large, 1024 dim, most accurate but slower
         """
         super().__init__()
 
-        self.transformer: nn.Module = models.resnet101(weights=ResNet101_Weights.DEFAULT)
+        # Load DINOv2 model from torch hub
+        self.encoder = torch.hub.load("facebookresearch/dinov2", dino_model)
 
-        self.transformer = nn.Sequential(*list(self.transformer.children())[:-2])
-
-        # output from resnet's avgpool layer
-        num_features: int = 2048
-        self.avgpool: nn.Module = nn.AdaptiveAvgPool2d((1, 1))
-
-        self.intermediate_size: int = num_features // 2
-        self.classifier: nn.Sequential = nn.Sequential(
-            nn.Dropout(p=dropout),
-            nn.Linear(num_features, self.intermediate_size),
-            nn.ReLU(),
-            nn.Linear(self.intermediate_size, output_size),
-        )
-
-        for param in self.transformer.parameters():
-            param.requires_grad = False
-
-        for param in self.classifier.parameters():
-            param.requires_grad = True
-
-    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
-        """
-        Forward pass for feature extraction and classification.
-
-        Args:
-            inputs (Tensor): batch of images [batch, channels, height, width].
-
-        Returns:
-            Tensor: logits of shape [batch, number of classes].
-        """
-        features: torch.Tensor = self.transformer(inputs)  # [batch, 2048, H, W]
-        features = self.avgpool(features)  # [batch, 2048, 1, 1]
-        features = features.view(features.size(0), -1)  # [batch, 2048]
-
-        self.last_features = self.classifier[1](features)
-
-        return self.classifier[3](self.last_features)
-
-    def extract_features(self, inputs: torch.Tensor) -> torch.Tensor:
-        """
-        Extract feature representations before the final classification layer.
-
-        Args:
-            inputs (Tensor): batch of images.
-
-        Returns:
-            Tensor: feature tensor of shape [batch, intermediate_size (1024)].
-        """
-        _ = self.forward(inputs)
-        return self.last_features
-
-
-class AutoEncoder(nn.Module):
-    """
-    AutoEncoder used for the Feature Extraction process
-    """
-
-    def __init__(self, num_classes: int = 12, dropout: float = 0.5) -> None:
-        """
-        Constructor of the AutoEncoder class.
-
-        Args:
-            num_classes (int, optional): number of classes. Defaults to 12.
-            dropout (float, optional): dropout probability. Defaults to 0.5.
-        """
-        super(AutoEncoder, self).__init__()
-
-        self.encoder: nn.Module = models.resnet101(weights=ResNet101_Weights.DEFAULT)
-        self.encoder: nn.Sequential = nn.Sequential(*list(self.encoder.children())[:-2])
-
-        num_features: int = 2048
-        self.avgpool: nn.Module = nn.AdaptiveAvgPool2d((1, 1))
-
-        self.intermediate_size: int = num_features // 2
-
-        self.dropout: nn.Dropout = nn.Dropout(p=dropout)
-        self.fc_enc: nn.Linear = nn.Linear(num_features, self.intermediate_size)
-        self.fc_dec: nn.Linear = nn.Linear(self.intermediate_size, 512 * 7 * 7)
-
-        self.decoder: nn.Sequential = nn.Sequential(
-            nn.ConvTranspose2d(512, 256, kernel_size=3, stride=2, padding=1, output_padding=1),
-            nn.BatchNorm2d(256),
-            nn.ReLU(),
-            nn.ConvTranspose2d(256, 128, kernel_size=3, stride=2, padding=1, output_padding=1),
-            nn.BatchNorm2d(128),
-            nn.ReLU(),
-            nn.ConvTranspose2d(128, 64, kernel_size=3, stride=2, padding=1, output_padding=1),
-            nn.BatchNorm2d(64),
-            nn.ReLU(),
-            nn.ConvTranspose2d(64, 32, kernel_size=3, stride=2, padding=1, output_padding=1),
-            nn.BatchNorm2d(32),
-            nn.ReLU(),
-            nn.ConvTranspose2d(32, 3, kernel_size=3, stride=2, padding=1, output_padding=1),
-            nn.Sigmoid()
-        )
-
-        self.classifier: nn.Sequential = nn.Sequential(
-            nn.Conv2d(3, 16, kernel_size=3, stride=1, padding=1),
-            nn.ReLU(),
-            nn.AdaptiveAvgPool2d((1, 1)),
-            nn.Flatten(),
-            nn.Linear(16, num_classes)
-        )
-
+        # Freeze encoder initially (can unfreeze later for fine-tuning)
         for param in self.encoder.parameters():
             param.requires_grad = False
-    
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Performs the forward pass of the model.
 
-        Args:
-            x (torch.Tensor): inputs to the model.
+        # Get backbone output dimension
+        if "vits14" in dino_model:
+            backbone_dim = 384
+        elif "vitb14" in dino_model:
+            backbone_dim = 768
+        elif "vitl14" in dino_model:
+            backbone_dim = 1024
+        elif "vitg14" in dino_model:
+            backbone_dim = 1536
+        else:
+            raise ValueError(f"Unknown DINOv2 model: {dino_model}")
 
-        Returns:
-            torch.Tensor: logits of the classification head.
-        """
-        encoded: torch.Tensor = self.encoder(x)
-        encoded = self.avgpool(encoded)
-        encoded = torch.flatten(encoded, 1) # [batch_size, 2048]
-        encoded = self.dropout(encoded)
-        latent_features: torch.Tensor = self.fc_enc(encoded)
-        
-        decoded: torch.Tensor = self.fc_dec(latent_features)
-        decoded = decoded.view(decoded.shape[0], 512, 7, 7)
-        decoded = self.decoder(decoded)
-
-        logits: torch.Tensor = self.classifier(decoded)
-        return logits
-    
-    def extract_features(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Method that performs the feature extraction process.
-
-        Args:
-            x (torch.Tensor): inputs to the model.
-
-        Returns:
-            torch.Tensor: features extracted.
-        """
-        features: torch.Tensor = self.encoder(x)
-        features = self.avgpool(features)
-        features = torch.flatten(features, 1)
-        return self.fc_enc(features)
-
-
-class CNNAvgPool(nn.Module):
-    """
-    CNN feature extractor using a ResNet50 backbone (AvgPool output).
-    """
-    def __init__(self, output_size: int = 12, dropout: float = 0.0) -> None:
-        """
-        Constructor for CNNExtractor using AvgPooling class.
-
-        Args:
-            output_size (int): Number of output classes.
-        """
-        super(CNNAvgPool, self).__init__()
-
-        self.backbone: nn.Module = models.resnet101(weights=ResNet101_Weights.DEFAULT)
-        self.backbone = nn.Sequential(*list(self.backbone.children())[:-1])
-
-        # output from resnet's avgpool layer
-        num_features: int = 2048
-        self.dropout: nn.Dropout = nn.Dropout(p=dropout)
-        self.classifier: nn.Linear = nn.Linear(num_features, output_size)
-
-        # freeze conv1, bn1, relu, maxpool, layer1, layer2
-        for param in self.backbone[:5].parameters():
-            param.requires_grad = False  
-
-        # unfreeze layer3 and layer4
-        for param in self.backbone[5:].parameters():
-            param.requires_grad = True 
-
-        for param in self.classifier.parameters():
-            param.requires_grad = True
-
-    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
-        """
-        Forward pass for feature extraction and classification.
-
-        Args:
-            inputs (Tensor): batch of images [batch, channels, height, width].
-
-        Returns:
-            Tensor: logits of shape [batch, number of classes].
-        """
-        features: torch.Tensor = self.backbone(inputs)  # [batch, 2048, 1, 1]
-        features = torch.flatten(features, 1)  # [batch, 2048]
-
-        self.last_features = features
-        features = self.dropout(features)
-
-        return self.classifier(features)
-
-    def extract_features(self, inputs: torch.Tensor) -> torch.Tensor:
-        """
-        Extract feature representations before the final classification layer.
-
-        Args:
-            inputs (Tensor): batch of images.
-
-        Returns:
-            Tensor: feature tensor of shape [batch, intermediate_size (1024)].
-        """
-        _ = self.forward(inputs)
-        return self.last_features
-
-
-
-class AEAvgPool(nn.Module):
-    """
-    AutoEncoder used for the Feature Extraction process (with AvgPooling)
-    """
-
-    def __init__(self, num_classes: int = 12, dropout: float = 0.5) -> None:
-        """
-        Constructor of the AutoEncoder class.
-
-        Args:
-            num_classes (int, optional): number of classes. Defaults to 12.
-            dropout (float, optional): dropout probability. Defaults to 0.5.
-        """
-        super(AEAvgPool, self).__init__()
-
-        self.encoder: nn.Module = models.resnet101(weights=ResNet101_Weights.DEFAULT)
-        self.encoder: nn.Sequential = nn.Sequential(*list(self.encoder.children())[:-1])
-
-        num_features: int = 2048
-        decoder_dim: int = 512 * 7 * 7
-        
-        self.dropout: nn.Dropout = nn.Dropout(p=dropout)
-        self.fc_dec: nn.Linear = nn.Linear(num_features, decoder_dim)
-
-        self.decoder: nn.Sequential = nn.Sequential(
-            nn.ConvTranspose2d(512, 256, kernel_size=3, stride=2, padding=1, output_padding=1),
-            nn.BatchNorm2d(256),
+        # Projection head for metric learning
+        self.projection_head = nn.Sequential(
+            nn.Linear(backbone_dim, backbone_dim // 2),
+            nn.BatchNorm1d(backbone_dim // 2),
             nn.ReLU(),
-            nn.ConvTranspose2d(256, 128, kernel_size=3, stride=2, padding=1, output_padding=1),
-            nn.BatchNorm2d(128),
-            nn.ReLU(),
-            nn.ConvTranspose2d(128, 64, kernel_size=3, stride=2, padding=1, output_padding=1),
-            nn.BatchNorm2d(64),
-            nn.ReLU(),
-            nn.ConvTranspose2d(64, 32, kernel_size=3, stride=2, padding=1, output_padding=1),
-            nn.BatchNorm2d(32),
-            nn.ReLU(),
-            nn.ConvTranspose2d(32, 3, kernel_size=3, stride=2, padding=1, output_padding=1),
-            nn.Sigmoid()
+            nn.Dropout(p=dropout),
+            nn.Linear(backbone_dim // 2, embedding_dim),
         )
 
-        self.classifier: nn.Sequential = nn.Sequential(
-            nn.Conv2d(3, 16, kernel_size=3, stride=1, padding=1),
-            nn.ReLU(),
-            nn.AdaptiveAvgPool2d((1, 1)),
-            nn.Flatten(),
-            nn.Linear(16, num_classes)
-        )
+        self.embedding_dim: int = embedding_dim
+        self.backbone_dim: int = backbone_dim
 
-        # freeze conv1, bn1, relu, maxpool, layer1, layer2, layer3
-        for param in self.encoder[:7].parameters():
-            param.requires_grad = False  
-
-        # unfreeze layer4
-        for param in self.encoder[7:].parameters():
-            param.requires_grad = True 
-
-        for param in self.classifier.parameters():
-            param.requires_grad = True
-    
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
-        Performs the forward pass of the model.
+        Forward pass through encoder and projection head.
 
         Args:
-            x (torch.Tensor): inputs to the model.
+            x: input images [batch_size, 3, H, W].
 
         Returns:
-            torch.Tensor: logits of the classification head.
+            normalized embeddings [batch_size, embedding_dim].
         """
-        encoded: torch.Tensor = self.encoder(x)
-        encoded = torch.flatten(encoded, 1) # [batch_size, 2048]
+        # Extract DINOv2 features (CLS token by default)
+        features = self.encoder(x)  # [batch_size, backbone_dim]
 
-        d_encoded: torch.Tensor = self.dropout(encoded)
-        
-        decoded: torch.Tensor = self.fc_dec(d_encoded)
-        decoded = decoded.view(decoded.shape[0], 512, 7, 7)
-        decoded = self.decoder(decoded)
+        # Project to embedding space
+        embeddings = self.projection_head(features)
 
-        logits: torch.Tensor = self.classifier(decoded)
-        return logits
-    
+        # L2 normalize for cosine similarity
+        embeddings = nn.functional.normalize(embeddings, p=2, dim=1)
+
+        return embeddings
+
     def extract_features(self, x: torch.Tensor) -> torch.Tensor:
         """
-        Method that performs the feature extraction process.
+        Extract normalized embeddings for inference.
 
         Args:
-            x (torch.Tensor): inputs to the model.
+            x: input images [batch_size, 3, H, W].
 
         Returns:
-            torch.Tensor: features extracted.
+            normalized embeddings [batch_size, embedding_dim].
         """
-        features: torch.Tensor = self.encoder(x)
-        features = torch.flatten(features, 1)
-        return features
+        with torch.no_grad():
+            return self.forward(x)
+
+    def unfreeze_encoder(self, num_layers: int = -1) -> None:
+        """
+        Unfreeze the encoder for fine-tuning.
+
+        Args:
+            num_layers: number of layers to unfreeze from the end.
+                       -1 means unfreeze all layers.
+        """
+        if num_layers == -1:
+            for param in self.encoder.parameters():
+                param.requires_grad = True
+        else:
+            encoder_params = list(self.encoder.parameters())
+            for param in encoder_params[-num_layers:]:
+                param.requires_grad = True
+
+
+class TripletLoss(nn.Module):
+    """
+    Triplet loss with online hard negative mining.
+    """
+
+    def __init__(self, margin: float = 0.3) -> None:
+        """
+        Args:
+            margin: margin for triplet loss.
+        """
+        super().__init__()
+        self.margin = margin
+
+    def forward(
+        self, anchor: torch.Tensor, positive: torch.Tensor, negative: torch.Tensor
+    ) -> torch.Tensor:
+        """
+        Compute triplet loss.
+
+        Args:
+            anchor: anchor embeddings [batch_size, embedding_dim].
+            positive: positive embeddings [batch_size, embedding_dim].
+            negative: negative embeddings [batch_size, embedding_dim].
+
+        Returns:
+            scalar loss value.
+        """
+        # Compute distances (euclidean distance for normalized
+        # embeddings = cosine distance)
+
+        pos_dist = torch.sum((anchor - positive) ** 2, dim=1)
+        neg_dist = torch.sum((anchor - negative) ** 2, dim=1)
+
+        # Triplet loss with margin
+        loss = torch.relu(pos_dist - neg_dist + self.margin)
+
+        return loss.mean()
+
+
+class ContrastiveLoss(nn.Module):
+    """
+    NT-Xent (Normalized Temperature-scaled Cross Entropy) loss for contrastive learning.
+    """
+
+    def __init__(self, temperature: float = 0.07) -> None:
+        """
+        Args:
+            temperature: temperature parameter for scaling.
+        """
+        super().__init__()
+        self.temperature = temperature
+
+    def forward(
+        self, anchor: torch.Tensor, positive: torch.Tensor, negatives: torch.Tensor
+    ) -> torch.Tensor:
+        """
+        Compute contrastive loss.
+
+        Args:
+            anchor: anchor embeddings [batch_size, embedding_dim].
+            positive: positive embeddings [batch_size, embedding_dim].
+            negatives: negative embeddings [batch_size, num_negatives, embedding_dim].
+
+        Returns:
+            scalar loss value.
+        """
+        batch_size = anchor.shape[0]
+
+        # Compute similarity between anchor and positive
+        pos_sim = torch.sum(anchor * positive, dim=1) / self.temperature  # [batch_size]
+
+        # Compute similarity between anchor and all negatives
+        neg_sim = (
+            torch.bmm(anchor.unsqueeze(1), negatives.transpose(1, 2)).squeeze(1)
+            / self.temperature
+        )  # [batch_size, num_negatives]
+
+        # Concatenate positive and negative similarities
+        logits = torch.cat(
+            [pos_sim.unsqueeze(1), neg_sim], dim=1
+        )  # [batch_size, 1 + num_negatives]
+
+        # Labels: positive is always at index 0
+        labels = torch.zeros(batch_size, dtype=torch.long, device=anchor.device)
+
+        # Cross entropy loss
+        loss = nn.functional.cross_entropy(logits, labels)
+
+        return loss
