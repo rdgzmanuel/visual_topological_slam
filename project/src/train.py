@@ -3,9 +3,12 @@ import torch
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from tqdm.auto import tqdm
+import matplotlib.pyplot as plt
+from pathlib import Path
 
 from src.models import ContrastiveLoss, TripletLoss, VisualEncoderDINO
-from src.utils import load_triplet_data, save_model, set_seed
+from src.utils import save_model, set_seed, plot_training_curves
+from src.data import load_triplet_data
 
 device: torch.device = (
     torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
@@ -16,6 +19,7 @@ torch.set_num_threads(8)
 
 SEQ_DATA_PATH: str = "seq_data"
 DATA_PATH: str = "data"
+IMAGES_PATH: Path = Path("images")
 
 
 def main() -> None:
@@ -24,7 +28,7 @@ def main() -> None:
     """
 
     # Hyperparameters
-    epochs: int = 50
+    epochs: int = 1
     lr: float = 1e-4
     batch_size: int = 32
     embedding_dim: int = 128
@@ -75,6 +79,8 @@ def main() -> None:
     )
 
     best_val_loss: float = float("inf")
+    train_losses: list[float] = []
+    val_losses: list[float] = []
 
     for epoch in tqdm(range(epochs), desc="Epochs"):
         train_loss = train_step(
@@ -84,6 +90,9 @@ def main() -> None:
         val_loss = val_step(
             model, val_data, criterion, writer, epoch, device, loss_type
         )
+
+        train_losses.append(train_loss)
+        val_losses.append(val_loss)
 
         scheduler.step()
 
@@ -100,6 +109,8 @@ def main() -> None:
 
     save_model(model, name)
     writer.close()
+
+    plot_training_curves(train_losses, val_losses, name)
 
     return None
 
@@ -147,25 +158,20 @@ def train_step(
 
             # Compute loss
             loss = criterion(anchor_emb, positive_emb, negative_emb)
+        # In train_step, replace lines 165-177 with:
         else:  # contrastive
-            anchor_imgs, positive_imgs, negative_imgs_list = batch
+            anchor_imgs, positive_imgs, negative_imgs = batch  # Changed from negative_imgs_list
             anchor_imgs = anchor_imgs.to(device)
             positive_imgs = positive_imgs.to(device)
-            negative_imgs_list = negative_imgs_list.to(
-                device
-            )  # [batch, num_neg, C, H, W]
+            negative_imgs = negative_imgs.to(device)
 
             # Forward pass
-            anchor_emb = model(anchor_imgs)
-            positive_emb = model(positive_imgs)
+            anchor_emb = model(anchor_imgs)  # [batch_size, embedding_dim]
+            positive_emb = model(positive_imgs)  # [batch_size, embedding_dim]
+            negative_emb = model(negative_imgs)  # [batch_size, embedding_dim]
 
-            # Process negatives
-            batch_size, num_neg = negative_imgs_list.shape[:2]
-            negative_imgs_flat = negative_imgs_list.view(
-                -1, *negative_imgs_list.shape[2:]
-            )
-            negative_emb_flat = model(negative_imgs_flat)
-            negative_emb = negative_emb_flat.view(batch_size, num_neg, -1)
+            # Reshape for contrastive loss (add num_negatives dimension = 1)
+            negative_emb = negative_emb.unsqueeze(1)  # [batch_size, 1, embedding_dim]
 
             # Compute loss
             loss = criterion(anchor_emb, positive_emb, negative_emb)
@@ -224,21 +230,18 @@ def val_step(
                 negative_emb = model(negative_imgs)
 
                 loss = criterion(anchor_emb, positive_emb, negative_emb)
-            else:
-                anchor_imgs, positive_imgs, negative_imgs_list = batch
+            else:  # contrastive
+                anchor_imgs, positive_imgs, negative_imgs = batch  # ✅ Changed
                 anchor_imgs = anchor_imgs.to(device)
                 positive_imgs = positive_imgs.to(device)
-                negative_imgs_list = negative_imgs_list.to(device)
+                negative_imgs = negative_imgs.to(device)
 
                 anchor_emb = model(anchor_imgs)
                 positive_emb = model(positive_imgs)
-
-                batch_size, num_neg = negative_imgs_list.shape[:2]
-                negative_imgs_flat = negative_imgs_list.view(
-                    -1, *negative_imgs_list.shape[2:]
-                )
-                negative_emb_flat = model(negative_imgs_flat)
-                negative_emb = negative_emb_flat.view(batch_size, num_neg, -1)
+                negative_emb = model(negative_imgs)
+                
+                # Reshape for contrastive loss
+                negative_emb = negative_emb.unsqueeze(1)  # ✅ Add num_negatives dimension
 
                 loss = criterion(anchor_emb, positive_emb, negative_emb)
 

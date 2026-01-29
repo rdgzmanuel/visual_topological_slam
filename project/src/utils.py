@@ -7,6 +7,11 @@ import seaborn as sns
 import torch
 from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
 from torch.jit import RecursiveScriptModule
+from pathlib import Path
+
+SEQ_DATA_PATH: str = "seq_data"
+DATA_PATH: str = "data"
+IMAGES_PATH: Path = Path("images")
 
 
 def save_model(model: torch.nn.Module, name: str) -> None:
@@ -105,65 +110,94 @@ def load_tensorboard_scalars(
 
 
 def plot_training_curves(
-    run_names: list[str],
-    display_names: dict[str, str] | None = None,
-    colors: list[str] | None = None,
-    save_dir: str = "images/training_curves",
+    train_losses: list[float],
+    val_losses: list[float],
+    name: str
 ) -> None:
     """
-    Plots training curves from TensorBoard logs.
+    Plot and save professional training curves for loss.
 
     Args:
-        run_names: list of run names (folder names in runs/).
-        display_names: optional mapping of run names to display names.
-        colors: optional list of colors for each run.
-        save_dir: directory to save the plots.
+        train_losses: list of training losses per epoch.
+        val_losses: list of validation losses per epoch.
+        name: name for the saved plot.
     """
-    log_dir: str = "runs"
-    metrics: list[str] = ["train/loss", "val/loss"]
-
-    os.makedirs(save_dir, exist_ok=True)
-
-    if display_names is None:
-        display_names = {name: name for name in run_names}
-
-    if colors is None:
-        colors = ["#007acc", "#ff7700", "#33cc33", "#cc33cc", "#ff0066", "#00cc99"]
-
-    sns.set_style("whitegrid")
-    sns.set_palette("dark")
-
-    for metric in metrics:
-        plt.figure(figsize=(10, 6))
-
-        for i, run_name in enumerate(run_names):
-            run_path: str = os.path.join(log_dir, run_name)
-            data = load_tensorboard_scalars(run_path, metric)
-
-            if data:
-                steps, values = data
-                plt.plot(
-                    steps,
-                    values,
-                    label=display_names[run_name],
-                    linewidth=2.5,
-                    color=colors[i % len(colors)],
-                )
-
-        plt.title(metric.replace("/", " - ").title(), fontsize=16, fontweight="bold")
-        plt.xlabel("Epochs", fontsize=14)
-        plt.ylabel("Value", fontsize=14)
-        plt.xticks(fontsize=12)
-        plt.yticks(fontsize=12)
-        plt.legend(fontsize=12, loc="best", frameon=True, fancybox=True, shadow=True)
-        plt.grid(True, linestyle="--", alpha=0.6)
-
-        image_path: str = os.path.join(save_dir, f"{metric.replace('/', '_')}.png")
-        plt.savefig(image_path, dpi=300, bbox_inches="tight")
-        plt.close()
-
-        print(f"Saved plot: {image_path}")
-
+    IMAGES_PATH.mkdir(exist_ok=True)
+    
+    # Set professional style
+    plt.style.use('seaborn-v0_8-darkgrid')
+    
+    epochs = np.arange(1, len(train_losses) + 1)
+    
+    # Create figure with higher DPI for publication quality
+    fig, ax = plt.subplots(figsize=(12, 7), dpi=300)
+    
+    # Plot with professional styling
+    ax.plot(epochs, train_losses, 
+            color='#2E86AB', 
+            linewidth=2.5, 
+            label='Training Loss',
+            marker='o',
+            markersize=4,
+            markevery=max(1, len(epochs)//20))
+    
+    ax.plot(epochs, val_losses, 
+            color='#A23B72', 
+            linewidth=2.5, 
+            label='Validation Loss',
+            marker='s',
+            markersize=4,
+            markevery=max(1, len(epochs)//20))
+    
+    # Customize axes
+    ax.set_xlabel('Epoch', fontsize=14, fontweight='bold')
+    ax.set_ylabel('Loss', fontsize=14, fontweight='bold')
+    ax.set_title('Training and Validation Loss Curves', 
+                 fontsize=16, 
+                 fontweight='bold',
+                 pad=20)
+    
+    # Customize legend
+    ax.legend(fontsize=12, 
+             frameon=True, 
+             shadow=True,
+             loc='best',
+             fancybox=True)
+    
+    # Customize grid
+    ax.grid(True, alpha=0.3, linestyle='--', linewidth=0.8)
+    
+    # Customize tick parameters
+    ax.tick_params(axis='both', which='major', labelsize=11)
+    
+    # Add best validation loss annotation
+    best_val_idx = np.argmin(val_losses)
+    best_val_loss = val_losses[best_val_idx]
+    ax.annotate(f'Best: {best_val_loss:.4f}',
+                xy=(best_val_idx + 1, best_val_loss),
+                xytext=(10, 10),
+                textcoords='offset points',
+                fontsize=10,
+                bbox=dict(boxstyle='round,pad=0.5', 
+                         facecolor='yellow', 
+                         alpha=0.7),
+                arrowprops=dict(arrowstyle='->', 
+                               connectionstyle='arc3,rad=0',
+                               color='black',
+                               lw=1.5))
+    
+    # Tight layout for better spacing
+    plt.tight_layout()
+    
+    # Save with high quality
+    plt.savefig(IMAGES_PATH / f"{name}_loss.png", 
+                dpi=300, 
+                bbox_inches='tight',
+                facecolor='white',
+                edgecolor='none')
+    plt.close()
+    
+    print(f"\nTraining curves saved to {IMAGES_PATH / f'{name}_loss.png'}")
 
 if __name__ == "__main__":
     plot_training_curves(

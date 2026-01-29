@@ -68,6 +68,9 @@ class VisualEncoderDINO(nn.Module):
         Returns:
             normalized embeddings [batch_size, embedding_dim].
         """
+        if x.dim() == 3:  # [C, H, W]
+            x = x.unsqueeze(0)
+
         # Extract DINOv2 features (CLS token by default)
         features = self.encoder(x)  # [batch_size, backbone_dim]
 
