@@ -3,55 +3,81 @@ import random
 
 import matplotlib.pyplot as plt
 import numpy as np
-import seaborn as sns
 import torch
+import umap
+from pathlib import Path
 from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
 from torch.jit import RecursiveScriptModule
-from pathlib import Path
-
-SEQ_DATA_PATH: str = "seq_data"
-DATA_PATH: str = "data"
-IMAGES_PATH: Path = Path("images")
 
 
-def save_model(model: torch.nn.Module, name: str) -> None:
+from src.data import COLDEvaluationDataset
+from src.config import DATA_PATH, SEQ_DATA_PATH, IMAGES_PATH
+
+
+def save_model(model: torch.nn.Module, name: str, save_dir: str = "models") -> None:
     """
-    Saves a model in the 'models' folder as torch.jit.
-    Creates the 'models' folder if it doesn't exist.
-
+    Save model state dict (not the entire model).
+    
     Args:
-        model: pytorch model.
-        name: name of the model (without the extension, e.g. name.pt).
+        model: the model to save.
+        name: name for the saved model.
+        save_dir: directory to save models.
     """
+    save_path = Path(save_dir)
+    save_path.mkdir(parents=True, exist_ok=True)
+    
+    filepath = save_path / f"{name}.pth"
+    
+    torch.save({
+        'model_state_dict': model.state_dict(),
+        'embedding_dim': model.embedding_dim,
+        'backbone_dim': model.backbone_dim,
+        'dino_model': getattr(model, 'dino_model', 'dinov2_vits14'),
+    }, filepath)
+    
+    print(f"Model saved to {filepath}")
 
-    # Create folder if it does not exist
-    if not os.path.isdir("models"):
-        os.makedirs("models")
 
-    # Save scripted model
-    model_scripted: RecursiveScriptModule = torch.jit.script(model.cpu())
-    model_scripted.save(f"models/{name}.pt")
-
-    return None
-
-
-def load_model(name: str) -> RecursiveScriptModule:
+def load_model(name: str, load_dir: str = "models", device: str = "cuda") -> torch.nn.Module:
     """
-    Loads a model from the 'models' folder.
-
+    Load model from state dict.
+    
     Args:
-        name: name of the model to load.
-
+        name: name of the saved model.
+        load_dir: directory containing saved models.
+        device: device to load model on.
+        
     Returns:
-        RecursiveScriptModule: model in torchscript.
+        loaded model.
     """
-    model_path: str = f"/workspace/project/models/{name}.pt"
-
-    if not os.path.exists(model_path):
-        model_path = f"models/{name}.pt"
-
-    model: RecursiveScriptModule = torch.jit.load(model_path, map_location="cpu")
-
+    from src.models import VisualEncoderDINO
+    
+    filepath = Path(load_dir) / f"{name}.pth"
+    
+    if not filepath.exists():
+        raise FileNotFoundError(f"Model file not found: {filepath}")
+    
+    # Load checkpoint
+    checkpoint = torch.load(filepath, map_location=device)
+    
+    # Extract model config
+    embedding_dim = checkpoint.get('embedding_dim', 128)
+    dino_version = checkpoint.get('dino_version', 'v2')
+    dino_model = checkpoint.get('dino_model', 'dinov2_vits14')
+    
+    # Create model with same architecture
+    model = VisualEncoderDINO(
+        embedding_dim=embedding_dim,
+        dino_model=dino_model,
+    )
+    
+    # Load state dict
+    model.load_state_dict(checkpoint['model_state_dict'])
+    model.to(device)
+    model.eval()
+    
+    print(f"Model loaded from {filepath}")
+    
     return model
 
 
@@ -199,8 +225,134 @@ def plot_training_curves(
     
     print(f"\nTraining curves saved to {IMAGES_PATH / f'{name}_loss.png'}")
 
+
+def visualize_embeddings_umap(
+    model_name: str,
+    num_samples: int = 500,
+    load_dir: str = "models",
+    device: str = "cuda",
+    random_state: int = 42,
+) -> None:
+    """
+    Visualize embeddings using UMAP for a given trained model.
+    
+    Randomly samples images from the test set, extracts embeddings using the model,
+    and creates a 2D UMAP visualization colored by class.
+    
+    Args:
+        model_name: name of the saved model (without .pth extension).
+        num_samples: number of samples to visualize (will be capped by dataset size).
+        load_dir: directory containing saved models.
+        device: device to run inference on.
+        random_state: random seed for reproducibility.
+    """
+    
+    # Load the model
+    model = load_model(model_name, load_dir=load_dir, device=device)
+    model.eval()
+    
+    # Load test dataset
+    test_dataset = COLDEvaluationDataset(f"{DATA_PATH}/test")
+    
+    # Cap samples to dataset size
+    num_samples = min(num_samples, len(test_dataset))
+    
+    # Randomly sample indices
+    np.random.seed(random_state)
+    indices = np.random.choice(len(test_dataset), size=num_samples, replace=False)
+    
+    # Extract embeddings
+    embeddings: list[np.ndarray] = []
+    labels: list[int] = []
+    
+    print(f"Extracting embeddings for {num_samples} samples...")
+    with torch.no_grad():
+        for idx in indices:
+            image, label = test_dataset[idx]
+            image = image.unsqueeze(0).to(device)
+            embedding = model.extract_features(image)
+            embeddings.append(embedding.cpu().numpy().squeeze())
+            labels.append(label)
+    
+    embeddings_array = np.stack(embeddings)
+    labels_array = np.array(labels)
+    
+    # Apply UMAP
+    print("Running UMAP dimensionality reduction...")
+    reducer = umap.UMAP(
+        n_components=2,
+        n_neighbors=15,
+        min_dist=0.1,
+        metric="cosine",  # Good for normalized embeddings
+        random_state=random_state,
+    )
+    embeddings_2d = reducer.fit_transform(embeddings_array)
+    
+    # Create label name mapping (inverse of labels_correspondence)
+    label_names: dict[int, str] = {
+        0: "CR", 1: "2PO", 2: "RL", 3: "TL", 4: "TR", 5: "LO",
+        6: "1PO", 7: "KT", 8: "CNR", 9: "PA", 10: "LAB", 11: "ST",
+    }
+    
+    # Plot
+    IMAGES_PATH.mkdir(exist_ok=True)
+    plt.style.use('seaborn-v0_8-whitegrid')
+    
+    fig, ax = plt.subplots(figsize=(14, 10), dpi=300)
+    
+    # Get unique labels present in the sample
+    unique_labels = np.unique(labels_array)
+    colors = plt.cm.tab20(np.linspace(0, 1, len(unique_labels)))
+    
+    for i, label in enumerate(unique_labels):
+        mask = labels_array == label
+        ax.scatter(
+            embeddings_2d[mask, 0],
+            embeddings_2d[mask, 1],
+            c=[colors[i]],
+            label=label_names.get(label, f"Class {label}"),
+            alpha=0.7,
+            s=50,
+            edgecolors='white',
+            linewidths=0.5,
+        )
+    
+    ax.set_xlabel("UMAP Dimension 1", fontsize=14, fontweight='bold')
+    ax.set_ylabel("UMAP Dimension 2", fontsize=14, fontweight='bold')
+    ax.set_title(
+        f"UMAP Visualization of Embeddings\nModel: {model_name}",
+        fontsize=16,
+        fontweight='bold',
+        pad=20,
+    )
+    
+    ax.legend(
+        fontsize=10,
+        frameon=True,
+        shadow=True,
+        loc='center left',
+        bbox_to_anchor=(1.02, 0.5),
+        title="Classes",
+        title_fontsize=12,
+    )
+    
+    ax.tick_params(axis='both', which='major', labelsize=11)
+    
+    plt.tight_layout()
+    
+    save_path = IMAGES_PATH / f"{model_name}_umap.png"
+    plt.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
+    plt.close()
+    
+    print(f"UMAP visualization saved to {save_path}")
+
+
 if __name__ == "__main__":
-    plot_training_curves(
-        run_names=["visual_encoder_dino_triplet_dim128"],
-        display_names={"visual_encoder_dino_triplet_dim128": "DINOv2 Triplet"},
+    loss: str = "contrastive"  # triplet or contrastive
+    assert loss in ["triplet", "contrastive"]
+
+    visualize_embeddings_umap(
+        model_name=f"visual_encoder_dino_{loss}_dim128_best",
+        num_samples=500,
+        device="cuda",
     )

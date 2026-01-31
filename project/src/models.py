@@ -2,39 +2,28 @@ import torch
 import torch.nn as nn
 
 
+import torch
+import torch.nn as nn
+
 class VisualEncoderDINO(nn.Module):
     """
-    Visual encoder using DINOv2 backbone for compact place recognition features.
-    DINOv2 provides superior semantic understanding and spatial relationships.
+    Visual encoder using DINOv2 backbone.
+    DINOv2 (2023) uses patch size 16 and includes register tokens.
     """
 
     def __init__(
         self,
         embedding_dim: int = 128,
         dropout: float = 0.3,
-        dino_model: str = "dinov2_vits14",  # or "dinov2_vitb14", "dinov2_vitl14"
+        dino_model: str = "dinov2_vits14",
     ) -> None:
-        """
-        Constructor of the VisualEncoderDINO class.
-
-        Args:
-            embedding_dim: dimension of the output embedding (32-128 recommended).
-            dropout: dropout probability for regularization.
-            dino_model: which DINOv2 model variant to use:
-                - dinov2_vits14: small, 384 dim, fastest
-                - dinov2_vitb14: base, 768 dim, good balance
-                - dinov2_vitl14: large, 1024 dim, most accurate but slower
-        """
         super().__init__()
 
-        # Load DINOv2 model from torch hub
         self.encoder = torch.hub.load("facebookresearch/dinov2", dino_model)
 
-        # Freeze encoder initially (can unfreeze later for fine-tuning)
         for param in self.encoder.parameters():
             param.requires_grad = False
 
-        # Get backbone output dimension
         if "vits14" in dino_model:
             backbone_dim = 384
         elif "vitb14" in dino_model:
@@ -46,7 +35,6 @@ class VisualEncoderDINO(nn.Module):
         else:
             raise ValueError(f"Unknown DINOv2 model: {dino_model}")
 
-        # Projection head for metric learning
         self.projection_head = nn.Sequential(
             nn.Linear(backbone_dim, backbone_dim // 2),
             nn.BatchNorm1d(backbone_dim // 2),
@@ -59,50 +47,19 @@ class VisualEncoderDINO(nn.Module):
         self.backbone_dim: int = backbone_dim
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Forward pass through encoder and projection head.
-
-        Args:
-            x: input images [batch_size, 3, H, W].
-
-        Returns:
-            normalized embeddings [batch_size, embedding_dim].
-        """
-        if x.dim() == 3:  # [C, H, W]
+        if x.dim() == 3:
             x = x.unsqueeze(0)
 
-        # Extract DINOv2 features (CLS token by default)
-        features = self.encoder(x)  # [batch_size, backbone_dim]
-
-        # Project to embedding space
+        features = self.encoder(x)
         embeddings = self.projection_head(features)
-
-        # L2 normalize for cosine similarity
         embeddings = nn.functional.normalize(embeddings, p=2, dim=1)
-
         return embeddings
 
     def extract_features(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Extract normalized embeddings for inference.
-
-        Args:
-            x: input images [batch_size, 3, H, W].
-
-        Returns:
-            normalized embeddings [batch_size, embedding_dim].
-        """
         with torch.no_grad():
             return self.forward(x)
 
     def unfreeze_encoder(self, num_layers: int = -1) -> None:
-        """
-        Unfreeze the encoder for fine-tuning.
-
-        Args:
-            num_layers: number of layers to unfreeze from the end.
-                       -1 means unfreeze all layers.
-        """
         if num_layers == -1:
             for param in self.encoder.parameters():
                 param.requires_grad = True
