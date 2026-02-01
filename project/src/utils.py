@@ -1,51 +1,80 @@
 import os
 import random
+from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
 import torch
+from models import VisualEncoderDINO
 from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
-from torch.jit import RecursiveScriptModule
 
 
-def save_model(model: torch.nn.Module, name: str) -> None:
+def save_model(model: torch.nn.Module, name: str, save_dir: str = "models") -> None:
     """
-    Saves a model in the 'models' folder as torch.jit.
-    Creates the 'models' folder if it doesn't exist.
+    Save model state dict (not the entire model).
 
     Args:
-        model: pytorch model.
-        name: name of the model (without the extension, e.g. name.pt).
+        model: the model to save.
+        name: name for the saved model.
+        save_dir: directory to save models.
     """
+    save_path = Path(save_dir)
+    save_path.mkdir(parents=True, exist_ok=True)
 
-    # Create folder if it does not exist
-    if not os.path.isdir("models"):
-        os.makedirs("models")
+    filepath = save_path / f"{name}.pth"
 
-    # Save scripted model
-    model_scripted: RecursiveScriptModule = torch.jit.script(model.cpu())
-    model_scripted.save(f"models/{name}.pt")
+    torch.save(
+        {
+            "model_state_dict": model.state_dict(),
+            "embedding_dim": model.embedding_dim,
+            "backbone_dim": model.backbone_dim,
+            "dino_version": getattr(model, "dino_version", "v2"),
+            "dino_model": getattr(model, "dino_model", "dinov2_vits14"),
+        },
+        filepath,
+    )
 
-    return None
+    print(f"Model saved to {filepath}")
 
 
-def load_model(name: str) -> RecursiveScriptModule:
+def load_model(
+    name: str, load_dir: str = "models", device: str = "cpu"
+) -> torch.nn.Module:
     """
-    Loads a model from the 'models' folder.
+    Load model from state dict.
 
     Args:
-        name: name of the model to load.
+        name: name of the saved model.
+        load_dir: directory containing saved models.
+        device: device to load model on.
 
     Returns:
-        RecursiveScriptModule: model in torchscript.
+        loaded model.
     """
-    model_path: str = f"/workspace/project/models/{name}.pt"
+    project_root = Path(__file__).resolve().parents[1]  # src → project
+    models_dir = project_root / load_dir
 
-    if not os.path.exists(model_path):
-        model_path = f"models/{name}.pt"
+    filepath = models_dir / f"{name}.pth"
 
-    model: RecursiveScriptModule = torch.jit.load(model_path, map_location="cpu")
+    if not filepath.exists():
+        raise FileNotFoundError(f"Model file not found: {filepath}")
+
+    checkpoint = torch.load(filepath, map_location=device)
+
+    embedding_dim = checkpoint.get("embedding_dim", 128)
+    dino_model = checkpoint.get("dino_model", "dinov2_vits14")
+
+    model: VisualEncoderDINO = VisualEncoderDINO(
+        embedding_dim=embedding_dim,
+        dino_model=dino_model,
+    )
+
+    model.load_state_dict(checkpoint["model_state_dict"])
+    model.to(device)
+    model.eval()
+
+    print(f"Model loaded from {filepath}")
 
     return model
 

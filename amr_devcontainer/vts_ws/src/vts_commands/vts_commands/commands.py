@@ -1,13 +1,13 @@
-import torch
-import rclpy
-import pickle
 import os
+import pickle
+
 import numpy as np
+import rclpy
+import torch
 from deep_translator import GoogleTranslator
-from vts_map_alignment.graph_class import Graph
+from transformers import CLIPTextModel, CLIPTokenizer
 from vts_graph_building.node import GraphNodeClass
-from typing import Optional
-from transformers import CLIPTokenizer, CLIPTextModel
+from vts_map_alignment.graph_class import Graph
 
 
 class Commander:
@@ -15,7 +15,7 @@ class Commander:
     Commander class is responsible for interpreting semantic commands and identifying
     corresponding nodes in a prebuilt semantic map graph. It leverages CLIP-based
     text embeddings and language translation to enable multilingual querying.
-    
+
     Attributes:
         _map_name (str): Name of the map used to locate graph files.
         _graph_name (str): Filename of the graph data.
@@ -26,7 +26,9 @@ class Commander:
         get_logger (Callable): Logging method.
     """
 
-    def __init__(self, threshold: float, query_sentence: str, graph_name: str, map_name: str):
+    def __init__(
+        self, threshold: float, query_sentence: str, graph_name: str, map_name: str
+    ):
         # Initialize required attributes externally before use
         self._threshold: float = threshold
         self._query_sentence: str = query_sentence
@@ -34,11 +36,14 @@ class Commander:
         self._map_name: str = map_name
 
         self._device: str = "cuda" if torch.cuda.is_available() else "cpu"
-        self._clip_tokenizer: CLIPTokenizer = CLIPTokenizer.from_pretrained("openai/clip-vit-base-patch32")
-        self._clip_text_model: CLIPTextModel = CLIPTextModel.from_pretrained("openai/clip-vit-base-patch32", use_safetensors=True).to(self._device)
+        self._clip_tokenizer: CLIPTokenizer = CLIPTokenizer.from_pretrained(
+            "openai/clip-vit-base-patch32"
+        )
+        self._clip_text_model: CLIPTextModel = CLIPTextModel.from_pretrained(
+            "openai/clip-vit-base-patch32", use_safetensors=True
+        ).to(self._device)
 
-        self._logger = rclpy.logging.get_logger('Commander')
-
+        self._logger = rclpy.logging.get_logger("Commander")
 
     def _load_graph_data(self, filename: str) -> Graph:
         """
@@ -59,8 +64,7 @@ class Commander:
 
         return graph
 
-
-    def find_closest_node(self, query_sentence: str) -> Optional[GraphNodeClass]:
+    def find_closest_node(self, query_sentence: str) -> GraphNodeClass | None:
         """
         Finds the graph node with the highest semantic similarity to the query sentence.
 
@@ -72,7 +76,9 @@ class Commander:
             exceeds the similarity threshold.
         """
         try:
-            english_query: str = GoogleTranslator(source='auto', target='en').translate(query_sentence)
+            english_query: str = GoogleTranslator(source="auto", target="en").translate(
+                query_sentence
+            )
         except Exception as e:
             self._logger().error(f"Translation failed: {e}")
             return None
@@ -114,7 +120,6 @@ class Commander:
         else:
             return None
 
-
     def _obtain_embedding(self, context_phrase: str) -> np.ndarray:
         """
         Converts a context phrase into a normalized semantic embedding using CLIP.
@@ -126,7 +131,9 @@ class Commander:
             np.ndarray: A normalized embedding vector.
         """
         normalized_phrase: str = context_phrase.strip().lower()
-        inputs = self._clip_tokenizer([normalized_phrase], return_tensors="pt", padding=True).to(self._device)
+        inputs = self._clip_tokenizer(
+            [normalized_phrase], return_tensors="pt", padding=True
+        ).to(self._device)
 
         with torch.no_grad():
             outputs = self._clip_text_model(**inputs)

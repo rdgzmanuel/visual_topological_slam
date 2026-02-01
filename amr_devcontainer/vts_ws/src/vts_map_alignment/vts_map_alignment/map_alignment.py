@@ -1,70 +1,134 @@
-import numpy as np
+"""
+Map alignment module for fusing topological graphs.
+
+This module provides the MapAligner class which handles the alignment and fusion
+of two topological graphs, including image stitching and feature extraction.
+"""
+
+from __future__ import annotations
+
 import copy
 import os
+from typing import TYPE_CHECKING
+
 import cv2
+import numpy as np
 import rclpy
 import torch
 from scipy.spatial import KDTree
 from scipy.spatial.distance import cosine
-
-from vts_graph_building.node import GraphNodeClass
-from vts_map_alignment.graph_class import Graph
-from vts_graph_building.graph_builder import concat_images ,\
-    process_stitched_image, world_to_pixel
+from torchvision import transforms
 from vts_camera.camera import Camera
+from vts_graph_building.graph_builder import (
+    concat_images,
+    process_stitched_image,
+    world_to_pixel,
+)
+from vts_graph_building.node import GraphNodeClass
+
+from vts_map_alignment.graph_class import Graph
+
+if TYPE_CHECKING:
+    from rclpy.impl.rcutils_logger import RcutilsLogger
 
 
 class MapAligner:
-    def __init__(self, model_name: str, trajectory: str,
-                 world_limits: tuple[float, float, float, float], origin: tuple[int, int],
-                 map_name: str) -> None:
+    """
+    Aligns and fuses two topological graphs into a unified graph.
+
+    This class provides methods for finding matching nodes between graphs,
+    fusing similar nodes, and inserting new nodes while maintaining graph
+    connectivity.
+
+    Attributes:
+        updated_graph: The resulting fused graph after alignment.
+    """
+
+    # Default configuration constants
+    DEFAULT_POSE_WEIGHT: float = 0.8
+    DEFAULT_DISTANCE_THRESHOLD: float = 4.0
+    DEFAULT_MIN_MATCHES: int = 4
+    DEFAULT_SIMILARITY_THRESHOLD: float = 0.9
+    DEFAULT_IMAGE_SIZE: tuple[int, int] = (224, 224)
+
+    def __init__(
+        self,
+        model_name: str,
+        trajectory: str,
+        world_limits: tuple[float, float, float, float],
+        origin: tuple[int, int],
+        map_name: str,
+    ) -> None:
         """
-        
+        Initialize the MapAligner.
+
+        Args:
+            model_name: Name of the model to use for feature extraction.
+            trajectory: Trajectory identifier for output naming.
+            world_limits: World coordinate limits as (min_x, max_x, min_y, max_y).
+            origin: Pixel origin coordinates as (x, y).
+            map_name: Name of the map file.
         """
-        self._trajectory: str = trajectory
-        self._world_limits: tuple[float, float, float, float] = world_limits
-        self._origin: tuple[int, int] = origin
-        self._map_name: str = map_name
+        self._trajectory = trajectory
+        self._world_limits = world_limits
+        self._origin = origin
+        self._map_name = map_name
 
-        # Neighbor finding
-        self._pose_weight: float = 0.8
-        self._threshold: float = 4.0
+        self._pose_weight = self.DEFAULT_POSE_WEIGHT
+        self._threshold = self.DEFAULT_DISTANCE_THRESHOLD
+        self._min_matches = self.DEFAULT_MIN_MATCHES
+        self._similarity_threshold = self.DEFAULT_SIMILARITY_THRESHOLD
 
-        # Image stitching
-        self._min_matches: int = 4
-        self._camera: Camera = Camera(model_name)
+        self._camera = Camera(model_name)
+        self._logger: RcutilsLogger = rclpy.logging.get_logger("MapAlignment")
 
-        # Map alignment
-        self._similarity_threshold: float = 0.9
+        self._transform = transforms.Compose([
+            transforms.Resize(self.DEFAULT_IMAGE_SIZE),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.5], std=[0.5]),
+        ])
 
-        self._logger = rclpy.logging.get_logger('MapAlignment')
-
+        self.updated_graph: Graph | None = None
 
     def align_graphs(self, graph_1: Graph, graph_2: Graph) -> None:
         """
-        Fuses two topological graphs into one unified graph stored in self.updated_graph.
+        Fuse two topological graphs into one unified graph.
+
+        The first graph is used as the base, and nodes from the second graph
+        are integrated into it.
 
         Args:
-            graph_1 (Graph): The base graph to copy and expand.
-            graph_2 (Graph): The secondary graph whose nodes will be integrated.
+            graph_1: The base graph to copy and expand.
+            graph_2: The secondary graph whose nodes will be integrated.
+
+        Raises:
+            ValueError: If either graph is empty.
         """
-        self.updated_graph: Graph = copy.deepcopy(graph_1)
+        if not graph_1.nodes:
+            raise ValueError("Base graph (graph_1) cannot be empty")
+        if not graph_2.nodes:
+            raise ValueError("Secondary graph (graph_2) cannot be empty")
+
+        self.updated_graph = copy.deepcopy(graph_1)
         self.updated_graph.node_id = max(self.updated_graph.nodes.keys()) + 1
-        self._update_graph(graph_2)
+        self._integrate_graph(graph_2)
 
-
-    def _update_graph(self, lookup_graph: Graph) -> None:
+    def _integrate_graph(self, lookup_graph: Graph) -> None:
         """
-        Updates `self.updated_graph` with nodes and edges from a second graph.
+        Integrate nodes from a secondary graph into the updated graph.
 
         Args:
-            lookup_graph (Graph): The graph whose nodes are being evaluated and fused/inserted.
+            lookup_graph: The graph whose nodes are being evaluated and integrated.
         """
-        for node in lookup_graph.nodes.values():
-            best_match: GraphNodeClass
-            score: float
+        if self.updated_graph is None:
+            raise RuntimeError("updated_graph must be initialized before integration")
 
+        for node in lookup_graph.nodes.values():
             best_match, score = self._search_best_match(node)
+
+            if best_match is None:
+                self._logger.warn(f"No match found for node {node.id}, skipping")
+                continue
 
             if score < self._threshold:
                 self._fusion_nodes(node, best_match)
@@ -73,82 +137,98 @@ class MapAligner:
                 new_node = copy.deepcopy(node)
                 new_node.id = self.updated_graph.node_id
 
-                self._include_node(new_node, best_match)
+                self._insert_node(new_node, best_match)
 
                 self.updated_graph.nodes[new_node.id] = new_node
                 self.updated_graph.current_node = new_node
-
                 self.updated_graph.node_id += 1
-        
-        return None
 
-
-    def _include_node(self, new_node: GraphNodeClass, best_match: GraphNodeClass) -> None:
+    def _insert_node(
+        self, new_node: GraphNodeClass, best_match: GraphNodeClass
+    ) -> None:
         """
-        Adds a new node to the graph, connects it to the current node,
-        and attempts to reroute an existing neighbor edge through this node.
+        Insert a new node into the graph with proper edge connections.
+
+        Connects the new node to the best match and attempts to reroute
+        existing neighbor edges through this node if appropriate.
 
         Args:
-            new_node (GraphNodeClass): The new node to insert into the graph.
+            new_node: The new node to insert.
+            best_match: The existing node to connect to.
         """
+        if self.updated_graph is None:
+            raise RuntimeError("updated_graph must be initialized")
 
-        next_node = self._find_next_node((best_match, new_node))
+        next_node = self._find_next_node(best_match, new_node)
         self.updated_graph.edges.append((best_match.id, new_node.id))
 
-        if next_node is not None:
-            self.updated_graph.edges.append((new_node.id, next_node.id))
-            # Remove direct connection from best_match to next_node if it exists
+        if next_node is None:
+            return
 
-            direct_edge = (best_match.id, next_node.id)
-            reverse_edge = (next_node.id, best_match.id)
-            if direct_edge in self.updated_graph.edges:
-                self.updated_graph.edges.remove(direct_edge)
-            if reverse_edge in self.updated_graph.edges:
-                self.updated_graph.edges.remove(reverse_edge)
+        self.updated_graph.edges.append((new_node.id, next_node.id))
+        self._remove_edge(best_match.id, next_node.id)
+        self._check_next_node_neighbors(next_node, new_node)
 
-            self._check_next_node_neighbors(next_node, new_node)
-
-        return None
-
-
-    def _find_next_node(self, new_edge: tuple[GraphNodeClass, GraphNodeClass]) -> GraphNodeClass | None:
+    def _remove_edge(self, node_id_1: int, node_id_2: int) -> None:
         """
-        Finds the neighbor of the current node that most closely aligns
-        (via cosine similarity) with the direction of the new edge.
+        Remove edge between two nodes in both directions.
 
         Args:
-            new_edge (tuple[GraphNodeClass, GraphNodeClass]): Tuple of (previous_match, new_node)
+            node_id_1: First node ID.
+            node_id_2: Second node ID.
+        """
+        if self.updated_graph is None:
+            return
+
+        direct_edge = (node_id_1, node_id_2)
+        reverse_edge = (node_id_2, node_id_1)
+
+        if direct_edge in self.updated_graph.edges:
+            self.updated_graph.edges.remove(direct_edge)
+        if reverse_edge in self.updated_graph.edges:
+            self.updated_graph.edges.remove(reverse_edge)
+
+    def _find_next_node(
+        self, previous_match: GraphNodeClass, new_node: GraphNodeClass
+    ) -> GraphNodeClass | None:
+        """
+        Find the neighbor node that best aligns with the direction to new_node.
+
+        Args:
+            previous_match: The current node in the graph.
+            new_node: The new node being inserted.
 
         Returns:
-            Optional[GraphNodeClass]: Neighbor node to connect through, or None if none match well.
+            The neighbor node to connect through, or None if no suitable match.
         """
-        previous_match, new_node = new_edge
-        direction_vector: np.ndarray = np.array(new_node.pose[:2]) - np.array(previous_match.pose[:2])
+        if self.updated_graph is None:
+            return None
 
+        direction_vector = np.array(new_node.pose[:2]) - np.array(
+            previous_match.pose[:2]
+        )
         direction_norm = np.linalg.norm(direction_vector)
+
         if direction_norm == 0:
             return None
-        direction_vector /= direction_norm
 
-        max_similarity: float = float("-inf")
-        best_match: None | GraphNodeClass = None
+        direction_vector = direction_vector / direction_norm
 
-        relevant_edges_idx: list[tuple[int, int]] = [e for e in self.updated_graph.edges if previous_match.id in e]
-        relevant_edges: list[tuple[GraphNodeClass, GraphNodeClass]] = [
-            (self.updated_graph.nodes[node_idx], self.updated_graph.nodes[adj_idx])
-            for node_idx, adj_idx in relevant_edges_idx
-        ]
+        neighbors = self._get_node_neighbors(previous_match)
+        best_match: GraphNodeClass | None = None
+        max_similarity = float("-inf")
 
-        for edge in relevant_edges:
-            neighbor: GraphNodeClass = edge[1] if edge[0] == previous_match else edge[0]
-            edge_vector: np.ndarray = np.array(neighbor.pose[:2]) - np.array(previous_match.pose[:2])
-
+        for neighbor in neighbors:
+            edge_vector = np.array(neighbor.pose[:2]) - np.array(
+                previous_match.pose[:2]
+            )
             edge_norm = np.linalg.norm(edge_vector)
+
             if edge_norm == 0:
                 continue
-            edge_vector /= edge_norm
 
-            similarity: float = np.dot(direction_vector, edge_vector) # maximum 1
+            edge_vector = edge_vector / edge_norm
+            similarity = float(np.dot(direction_vector, edge_vector))
 
             if similarity > self._similarity_threshold and similarity > max_similarity:
                 max_similarity = similarity
@@ -156,40 +236,77 @@ class MapAligner:
 
         return best_match
 
-
-    def _search_best_match(self, node: GraphNodeClass, k: int = 3) -> tuple[GraphNodeClass, float]:
+    def _get_node_neighbors(self, node: GraphNodeClass) -> list[GraphNodeClass]:
         """
-        Find the best matching node to the given node in the lookup graph using a KD-tree
-        for spatial proximity and cosine distance for visual similarity.
+        Get all neighbors of a node from the updated graph.
 
         Args:
-            node (GraphNodeClass): The query node.
-            k (int): The number of nearest spatial neighbors to consider.
+            node: The node to find neighbors for.
 
         Returns:
-            tuple[GraphNodeClass, float]: The best matching node and the combined similarity score.
+            List of neighboring nodes.
         """
-        # Extract 2D poses for KD-tree
-        node_positions: np.ndarray = np.array([n.pose[:2] for n in self.updated_graph.nodes.values()])
-        node_list: list[GraphNodeClass] = list(self.updated_graph.nodes.values())
+        if self.updated_graph is None:
+            return []
 
-        kd_tree: KDTree = KDTree(node_positions)
+        neighbors: list[GraphNodeClass] = []
 
-        # Find spatially nearest neighbors
-        distances, indices = kd_tree.query(node.pose[:2], k=min(k, len(node_list)))
-        candidates: list[GraphNodeClass] = [node_list[i] for i in np.atleast_1d(indices)]
+        for edge in self.updated_graph.edges:
+            if node.id not in edge:
+                continue
+
+            neighbor_id = edge[1] if edge[0] == node.id else edge[0]
+            neighbor = self.updated_graph.nodes.get(neighbor_id)
+
+            if neighbor is not None:
+                neighbors.append(neighbor)
+
+        return neighbors
+
+    def _search_best_match(
+        self, node: GraphNodeClass, k: int = 3
+    ) -> tuple[GraphNodeClass | None, float]:
+        """
+        Find the best matching node using spatial proximity and visual similarity.
+
+        Uses a KD-tree for efficient spatial search and cosine distance for
+        visual feature comparison.
+
+        Args:
+            node: The query node.
+            k: Number of nearest spatial neighbors to consider.
+
+        Returns:
+            Tuple of (best matching node, combined similarity score).
+            Returns (None, inf) if no match is found.
+        """
+        if self.updated_graph is None or not self.updated_graph.nodes:
+            return None, float("inf")
+
+        if not 0.0 <= self._pose_weight <= 1.0:
+            raise ValueError("Pose weight must be between 0 and 1")
+
+        node_list = list(self.updated_graph.nodes.values())
+        node_positions = np.array([n.pose[:2] for n in node_list])
+
+        kd_tree = KDTree(node_positions)
+        k_actual = min(k, len(node_list))
+        distances, indices = kd_tree.query(node.pose[:2], k=k_actual)
+
+        distances = np.atleast_1d(distances)
+        indices = np.atleast_1d(indices)
 
         best_node: GraphNodeClass | None = None
-        best_score: float = float("inf")
+        best_score = float("inf")
 
-        assert 0.0 <= self._pose_weight <= 1.0, "Pose weight must be between 0 and 1."
+        for i, idx in enumerate(indices):
+            candidate = node_list[idx]
+            pose_distance = float(distances[i])
+            visual_distance = float(
+                cosine(node.visual_features, candidate.visual_features)
+            )
 
-        for i, candidate in enumerate(candidates):
-            pose_distance: float = distances[i]
-            visual_distance: float = cosine(node.visual_features, candidate.visual_features)
-
-            # Weighted sum of pose distance and visual distance
-            score: float = (
+            score = (
                 self._pose_weight * pose_distance
                 + (1 - self._pose_weight) * visual_distance
             )
@@ -199,254 +316,348 @@ class MapAligner:
                 best_node = candidate
 
         return best_node, best_score
-    
 
-    def _check_next_node_neighbors(self, next_node: GraphNodeClass, new_node: GraphNodeClass) -> None:
+    def _check_next_node_neighbors(
+        self, next_node: GraphNodeClass, new_node: GraphNodeClass
+    ) -> None:
         """
-        Attempts to insert new_node between next_node and its neighbors if it improves graph structure.
+        Check if new_node should be inserted between next_node and its neighbors.
 
-        If new_node lies in a similar direction and forms a shorter path to a neighbor of next_node,
-        it replaces the direct edge with two edges: next_node <-> new_node and new_node <-> neighbor.
+        If new_node lies in a similar direction and forms a shorter path to a
+        neighbor, it replaces the direct edge with edges through new_node.
 
         Args:
-            next_node (GraphNodeClass): An existing node in the graph.
-            new_node (GraphNodeClass): A candidate node to insert between next_node and its neighbors.
+            next_node: An existing node in the graph.
+            new_node: A candidate node to insert between next_node and its neighbors.
         """
-        # Now we check the next node's neighbors in case we can also introduce the new node between them.
-        direction_vector: np.array = np.array(next_node.pose[:2]) - np.array(new_node.pose[:2])
+        if self.updated_graph is None:
+            return
 
-        relevant_edges_idx: list[tuple[int, int]] = [e for e in self.updated_graph.edges
-                                                     if next_node.id in e and new_node.id not in e]
-        relevant_edges: list[tuple[GraphNodeClass, GraphNodeClass]] = [(self.updated_graph.nodes[node_idx], self.updated_graph.nodes[adj_idx])
-                                                                    for node_idx, adj_idx in relevant_edges_idx]
-        
+        relevant_edges = [
+            e
+            for e in self.updated_graph.edges
+            if next_node.id in e and new_node.id not in e
+        ]
+
         for edge in relevant_edges:
-            neighbor: GraphNodeClass = edge[1] if edge[0] == next_node else edge[0]
-            edge_vector: np.array = np.array(neighbor.pose[:2]) - np.array(next_node.pose[:2])
-            direction_vector: np.array = np.array(neighbor.pose[:2]) - np.array(new_node.pose[:2])
+            neighbor_id = edge[1] if edge[0] == next_node.id else edge[0]
+            neighbor = self.updated_graph.nodes.get(neighbor_id)
 
-            similarity: float = np.dot(direction_vector, edge_vector)
+            if neighbor is None:
+                continue
 
-            edge_distance: float = self._compute_distance(neighbor.pose[0], neighbor.pose[1],
-                                                          next_node.pose[0], next_node.pose[1])
-            
-            new_distance: float = self._compute_distance(neighbor.pose[0], neighbor.pose[1],
-                                                          new_node.pose[0], new_node.pose[1])
+            edge_vector = np.array(neighbor.pose[:2]) - np.array(next_node.pose[:2])
+            direction_vector = np.array(neighbor.pose[:2]) - np.array(new_node.pose[:2])
+
+            similarity = float(np.dot(direction_vector, edge_vector))
+
+            edge_distance = self._compute_distance(
+                neighbor.pose[0], neighbor.pose[1], next_node.pose[0], next_node.pose[1]
+            )
+            new_distance = self._compute_distance(
+                neighbor.pose[0], neighbor.pose[1], new_node.pose[0], new_node.pose[1]
+            )
 
             if similarity > self._similarity_threshold and edge_distance > new_distance:
                 self.updated_graph.edges.append((new_node.id, neighbor.id))
-                
-                direct_edge = (neighbor.id, next_node.id)
-                reverse_edge = (next_node.id, neighbor.id)
-                if direct_edge in self.updated_graph.edges:
-                    self.updated_graph.edges.remove(direct_edge)
-                if reverse_edge in self.updated_graph.edges:
-                    self.updated_graph.edges.remove(reverse_edge)
-
-        return None
-
+                self._remove_edge(neighbor.id, next_node.id)
 
     def _fusion_nodes(self, node: GraphNodeClass, best_match: GraphNodeClass) -> None:
         """
+        Fuse two nodes by averaging poses and stitching images.
 
+        Updates best_match in place with averaged pose, stitched image,
+        and recomputed visual features.
 
         Args:
-            node_1 (GraphNodeClass): Node coming from graph 2.
-            node_2 (GraphNodeClass): Node coming from graph 1.
-
-        Returns:
-            GraphNodeClass: _description_
+            node: Node from the secondary graph.
+            best_match: Node from the base graph to update.
         """
-
-        new_pose: tuple[float, float, float] = self._average_pose(node.pose, best_match.pose)
-        new_image: np.ndarray = self.stitch_images(node.image, best_match.image,
-                                                min_matches=self._min_matches)
-        tensor_image: torch.Tensor = process_stitched_image(new_image)
-        new_visual_features: np.ndarray = self._extract_features(tensor_image)
+        new_pose = self._average_pose(node.pose, best_match.pose)
+        new_image = self.stitch_images(node.image, best_match.image)
+        tensor_image = process_stitched_image(new_image, self._transform)
+        new_visual_features = self._extract_features(tensor_image)
 
         best_match.pose = new_pose
         best_match.image = new_image
         best_match.visual_features = new_visual_features
-
         best_match.update_semantics()
-
-        return None
-    
 
     def _extract_features(self, image: torch.Tensor) -> np.ndarray:
         """
-        
+        Extract visual features from an image tensor.
 
         Args:
-            image (torch.Tensor): _description_
+            image: Input image as a PyTorch tensor.
 
         Returns:
-            np.ndarray: _description_
+            Feature vector as a float32 numpy array.
         """
-        features: torch.Tensor = self._camera.extract_features(image)
+        features = self._camera.extract_features(image)
+        features_flat = features.view(-1)
 
-        if features.is_cuda:
-            features: list = features.view(-1).cpu().tolist()
+        if features_flat.is_cuda:
+            features_list = features_flat.cpu().tolist()
         else:
-            features: list = features.view(-1).tolist()
+            features_list = features_flat.tolist()
 
-        return np.array(features).astype("float32")
-    
+        return np.array(features_list, dtype=np.float32)
 
     def generate_map(self) -> None:
         """
-        Generates final path image, drawing both node positions and edges.
+        Generate and save a visualization of the aligned graph on a map image.
+
+        Draws node positions as red circles and edges as green lines.
+
+        Raises:
+            RuntimeError: If updated_graph is not initialized.
+            FileNotFoundError: If the map image file does not exist.
         """
-        map_folder: str = os.path.join("images/maps", self._map_name)
-        file_name: str = self._trajectory + ".png"
-        output_path: str = os.path.join(f"images/final_aligned_maps/{self._map_name[:-4]}", file_name)
+        if self.updated_graph is None:
+            raise RuntimeError("Cannot generate map: updated_graph is not initialized")
+
+        map_folder = os.path.join("images/maps", self._map_name)
+        output_dir = f"images/final_aligned_maps/{self._map_name[:-4]}"
+        output_path = os.path.join(output_dir, f"{self._trajectory}.png")
+
+        if not os.path.exists(map_folder):
+            raise FileNotFoundError(f"Map image not found: {map_folder}")
+
+        os.makedirs(output_dir, exist_ok=True)
 
         map_img = cv2.imread(map_folder)
+        if map_img is None:
+            raise ValueError(f"Failed to load map image: {map_folder}")
 
-        # Draw nodes
-        for node in self.updated_graph.nodes.values():
-            y, x, _ = node.pose  # Assuming pose = (y, x, theta)
-            px, py = world_to_pixel(-x, y, map_img.shape, self._world_limits, origin=self._origin)
-            cv2.circle(map_img, (px, py), 5, (0, 0, 255), -1)
-
-        # Draw edges
-        for idx_1, idx_2 in self.updated_graph.edges:
-            node_1: GraphNodeClass = self.updated_graph.nodes.get(idx_1)
-            node_2: GraphNodeClass = self.updated_graph.nodes.get(idx_2)
-            if node_1 is not None and node_2 is not None:
-                y1, x1, _ = node_1.pose
-                y2, x2, _ = node_2.pose
-                p1 = world_to_pixel(-x1, y1, map_img.shape, self._world_limits, origin=self._origin)
-                p2 = world_to_pixel(-x2, y2, map_img.shape, self._world_limits, origin=self._origin)
-                cv2.line(map_img, p1, p2, (0, 255, 0), 2)  # Green lines for edges
+        self._draw_nodes(map_img)
+        self._draw_edges(map_img)
 
         cv2.imwrite(output_path, map_img)
 
-        return None
-
-    
-
-    def _average_pose(self, pose_1: tuple[float, float, float],
-                      pose_2: tuple[float, float, float]) -> tuple[float, float, float]:
+    def _draw_nodes(self, map_img: np.ndarray) -> None:
         """
-        
+        Draw nodes on the map image as red circles.
 
         Args:
-            pose_1 (tuple[float, float, float]): _description_
-            pose_2 (tuple[float, float, float]): _description_
-
-        Returns:
-            tuple[float, float, float]: _description_
+            map_img: The map image to draw on (modified in place).
         """
-        return tuple((a + b) / 2 for a, b in zip(pose_1, pose_2))
-    
+        if self.updated_graph is None:
+            return
 
-    def _compute_distance(self, x: float, y: float, prev_x: float, prev_y: float) -> float:
+        for node in self.updated_graph.nodes.values():
+            x, y, _ = node.pose
+            px, py = world_to_pixel(
+                x, y, map_img.shape, self._world_limits, origin=self._origin
+            )
+            cv2.circle(map_img, (px, py), 5, (0, 0, 255), -1)
+
+    def _draw_edges(self, map_img: np.ndarray) -> None:
         """
-        Computes Euclidean distance between two points.
+        Draw edges on the map image as green lines.
 
         Args:
-            x (float): current x coordinate.
-            y (float): current y coordinate.
-            prev_x (float): previous x coordinate.
-            prev_y (float): previous y coordinate.
+            map_img: The map image to draw on (modified in place).
+        """
+        if self.updated_graph is None:
+            return
+
+        for idx_1, idx_2 in self.updated_graph.edges:
+            node_1 = self.updated_graph.nodes.get(idx_1)
+            node_2 = self.updated_graph.nodes.get(idx_2)
+
+            if node_1 is None or node_2 is None:
+                continue
+
+            x1, y1, _ = node_1.pose
+            x2, y2, _ = node_2.pose
+
+            p1 = world_to_pixel(
+                x1, y1, map_img.shape, self._world_limits, origin=self._origin
+            )
+            p2 = world_to_pixel(
+                x2, y2, map_img.shape, self._world_limits, origin=self._origin
+            )
+            cv2.line(map_img, p1, p2, (0, 255, 0), 2)
+
+    @staticmethod
+    def _average_pose(
+        pose_1: tuple[float, float, float], pose_2: tuple[float, float, float]
+    ) -> tuple[float, float, float]:
+        """
+        Compute the element-wise average of two poses.
+
+        Args:
+            pose_1: First pose as (y, x, theta).
+            pose_2: Second pose as (y, x, theta).
 
         Returns:
-            float: distance between (x, y) and (prev_x, prev_y).
+            Averaged pose as (y, x, theta).
         """
-        return np.sqrt((x - prev_x) ** 2 + (y - prev_y) ** 2)
-    
+        return (
+            (pose_1[0] + pose_2[0]) / 2,
+            (pose_1[1] + pose_2[1]) / 2,
+            (pose_1[2] + pose_2[2]) / 2,
+        )
+
+    @staticmethod
+    def _compute_distance(x1: float, y1: float, x2: float, y2: float) -> float:
+        """
+        Compute Euclidean distance between two 2D points.
+
+        Args:
+            x1: X coordinate of first point.
+            y1: Y coordinate of first point.
+            x2: X coordinate of second point.
+            y2: Y coordinate of second point.
+
+        Returns:
+            Euclidean distance between the points.
+        """
+        return float(np.sqrt((x1 - x2) ** 2 + (y1 - y2) ** 2))
 
     def stitch_images(
         self,
         image_1: np.ndarray,
         image_2: np.ndarray,
-        min_matches: int = 4
+        min_matches: int | None = None,
     ) -> np.ndarray:
         """
-        Stitches two images together using SIFT feature matching and homography.
-        
+        Stitch two images using SIFT feature matching and homography.
+
         Args:
-            image_1 (np.ndarray): First input image (BGR format).
-            image_2 (np.ndarray): Second input image (BGR format).
-            min_matches (int): Minimum number of good matches to attempt stitching.
-        
+            image_1: First input image (BGR format).
+            image_2: Second input image (BGR format).
+            min_matches: Minimum good matches required. Defaults to instance setting.
+
         Returns:
-            np.ndarray: Stitched image if successful, otherwise fallback image.
+            Stitched image if successful, otherwise a fallback image.
         """
+        if min_matches is None:
+            min_matches = self._min_matches
 
-        gray_1: np.ndarray = cv2.cvtColor(image_1, cv2.COLOR_BGR2GRAY)
-        gray_2: np.ndarray = cv2.cvtColor(image_2, cv2.COLOR_BGR2GRAY)
+        if image_1.size == 0 or image_2.size == 0:
+            self._logger.warn("Empty image provided for stitching")
+            return image_1 if image_1.size > 0 else image_2
 
-        sift: cv2.SIFT = cv2.SIFT_create()
-        kp1: list[cv2.KeyPoint]
-        des1: np.ndarray
+        gray_1 = cv2.cvtColor(image_1, cv2.COLOR_BGR2GRAY)
+        gray_2 = cv2.cvtColor(image_2, cv2.COLOR_BGR2GRAY)
+
+        sift = cv2.SIFT_create()
         kp1, des1 = sift.detectAndCompute(gray_1, None)
-
-        kp2: list[cv2.KeyPoint]
-        des2: np.ndarray
         kp2, des2 = sift.detectAndCompute(gray_2, None)
 
         if des1 is None or des2 is None or len(des1) < 2 or len(des2) < 2:
-            return image_1  # No descriptors or too few: can't proceed
+            return image_1
 
-        index_params: dict[str, int] = {"algorithm": 1, "trees": 5}
-        search_params: dict[str, int] = {"checks": 50}
-        flann: cv2.FlannBasedMatcher = cv2.FlannBasedMatcher(index_params, search_params)
-
-        try:
-            matches: list[list[cv2.DMatch]] = flann.knnMatch(des1, des2, k=2)
-        except cv2.error:
-            return image_1  # Matching failed
-
-        good_matches: list[cv2.DMatch] = [
-            m for m, n in matches if m.distance < 0.7 * n.distance
-        ]
+        good_matches = self._find_good_matches(des1, des2)
 
         if len(good_matches) < min_matches:
-            return concat_images(image_1, image_2)  # Low match count, maybe no overlap
+            return concat_images(image_1, image_2)
 
-        src_pts: np.ndarray = np.float32([kp1[m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
-        dst_pts: np.ndarray = np.float32([kp2[m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+        homography = self._compute_homography(kp1, kp2, good_matches)
 
-        H: np.ndarray
-        mask_homography: np.ndarray
-        H, mask_homography = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
+        if homography is None:
+            return image_1
 
-        if H is None or H.shape != (3, 3):
-            return image_1  # Homography computation failed
+        return self._warp_and_blend(image_1, image_2, homography)
 
-        height: int
-        width: int
-        height, width, _ = image_2.shape
-        warped_img1: np.ndarray = cv2.warpPerspective(image_1, H, (width * 2, height))
-
-        # Overlay image_2 onto the warp
-        warped_img1[0:height, 0:width] = image_2
-
-        # Basic content quality check
-        gray_warped: np.ndarray = cv2.cvtColor(warped_img1, cv2.COLOR_BGR2GRAY)
-        _, mask_thresh = cv2.threshold(gray_warped, 1, 255, cv2.THRESH_BINARY)
-        nonzero_ratio: float = np.count_nonzero(mask_thresh) / (mask_thresh.shape[0] * mask_thresh.shape[1])
-
-        if nonzero_ratio < 0.2:
-            return image_1  # Warped result is mostly empty
-
-        stitched_image: np.ndarray = self.crop_black_borders(warped_img1, mask_thresh)
-
-        return stitched_image
-
-    def crop_black_borders(self, image: np.ndarray, mask: np.ndarray) -> np.ndarray:
+    def _find_good_matches(
+        self, des1: np.ndarray, des2: np.ndarray
+    ) -> list[cv2.DMatch]:
         """
-        Crops black borders from an image using a mask.
+        Find good feature matches using FLANN matcher with ratio test.
 
         Args:
-            image (np.ndarray): stitched image with potential black borders.
-            mask (np.ndarray): binary mask indicating valid regions.
+            des1: Descriptors from first image.
+            des2: Descriptors from second image.
 
         Returns:
-            np.ndarray: cropped image without black borders.
+            List of good matches that pass the ratio test.
+        """
+        index_params = {"algorithm": 1, "trees": 5}
+        search_params = {"checks": 50}
+        flann = cv2.FlannBasedMatcher(index_params, search_params)
+
+        try:
+            matches = flann.knnMatch(des1, des2, k=2)
+        except cv2.error:
+            return []
+
+        return [m for m, n in matches if m.distance < 0.7 * n.distance]
+
+    def _compute_homography(
+        self,
+        kp1: list[cv2.KeyPoint],
+        kp2: list[cv2.KeyPoint],
+        matches: list[cv2.DMatch],
+    ) -> np.ndarray | None:
+        """
+        Compute homography matrix from matched keypoints.
+
+        Args:
+            kp1: Keypoints from first image.
+            kp2: Keypoints from second image.
+            matches: List of matches between keypoints.
+
+        Returns:
+            3x3 homography matrix, or None if computation fails.
+        """
+        if len(matches) < 4:
+            return None
+
+        src_pts = np.float32([kp1[m.queryIdx].pt for m in matches]).reshape(-1, 1, 2)
+        dst_pts = np.float32([kp2[m.trainIdx].pt for m in matches]).reshape(-1, 1, 2)
+
+        H, _ = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
+
+        if H is None or H.shape != (3, 3):
+            return None
+
+        return H
+
+    def _warp_and_blend(
+        self, image_1: np.ndarray, image_2: np.ndarray, homography: np.ndarray
+    ) -> np.ndarray:
+        """
+        Warp and blend two images using a homography.
+
+        Args:
+            image_1: First image to warp.
+            image_2: Second image (reference).
+            homography: 3x3 transformation matrix.
+
+        Returns:
+            Blended result image, or image_1 if warping produces poor results.
+        """
+        height, width = image_2.shape[:2]
+        warped = cv2.warpPerspective(image_1, homography, (width * 2, height))
+        warped[0:height, 0:width] = image_2
+
+        gray_warped = cv2.cvtColor(warped, cv2.COLOR_BGR2GRAY)
+        _, mask = cv2.threshold(gray_warped, 1, 255, cv2.THRESH_BINARY)
+
+        nonzero_ratio = np.count_nonzero(mask) / mask.size
+
+        if nonzero_ratio < 0.2:
+            return image_1
+
+        return self._crop_black_borders(warped, mask)
+
+    @staticmethod
+    def _crop_black_borders(image: np.ndarray, mask: np.ndarray) -> np.ndarray:
+        """
+        Crop black borders from an image using a binary mask.
+
+        Args:
+            image: Image with potential black borders.
+            mask: Binary mask indicating valid (non-black) regions.
+
+        Returns:
+            Cropped image without black borders.
         """
         coords = cv2.findNonZero(mask)
+        if coords is None:
+            return image
+
         x, y, w, h = cv2.boundingRect(coords)
-        return image[y:y+h, x:x+w]
+        return image[y : y + h, x : x + w]
