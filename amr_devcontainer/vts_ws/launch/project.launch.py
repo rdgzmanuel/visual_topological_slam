@@ -120,7 +120,7 @@ def generate_launch_description() -> LaunchDescription:
         },
     }
 
-    # mode: str = "manual"
+    mode: str = "manual"
     # mode: str = "voice"
 
     return LaunchDescription([
