@@ -4,10 +4,12 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
-import seaborn as sns
 import torch
-from models import VisualEncoderDINO
+import umap
 from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
+
+from src.config import DATA_PATH, IMAGES_PATH
+from src.data import COLDEvaluationDataset
 
 
 def save_model(model: torch.nn.Module, name: str, save_dir: str = "models") -> None:
@@ -29,7 +31,6 @@ def save_model(model: torch.nn.Module, name: str, save_dir: str = "models") -> N
             "model_state_dict": model.state_dict(),
             "embedding_dim": model.embedding_dim,
             "backbone_dim": model.backbone_dim,
-            "dino_version": getattr(model, "dino_version", "v2"),
             "dino_model": getattr(model, "dino_model", "dinov2_vits14"),
         },
         filepath,
@@ -39,7 +40,7 @@ def save_model(model: torch.nn.Module, name: str, save_dir: str = "models") -> N
 
 
 def load_model(
-    name: str, load_dir: str = "models", device: str = "cpu"
+    name: str, load_dir: str = "models", device: str = "cuda"
 ) -> torch.nn.Module:
     """
     Load model from state dict.
@@ -52,24 +53,27 @@ def load_model(
     Returns:
         loaded model.
     """
-    project_root = Path(__file__).resolve().parents[1]  # src → project
-    models_dir = project_root / load_dir
+    from src.models import VisualEncoderDINO
 
-    filepath = models_dir / f"{name}.pth"
+    filepath = Path(load_dir) / f"{name}.pth"
 
     if not filepath.exists():
         raise FileNotFoundError(f"Model file not found: {filepath}")
 
+    # Load checkpoint
     checkpoint = torch.load(filepath, map_location=device)
 
+    # Extract model config
     embedding_dim = checkpoint.get("embedding_dim", 128)
     dino_model = checkpoint.get("dino_model", "dinov2_vits14")
 
-    model: VisualEncoderDINO = VisualEncoderDINO(
+    # Create model with same architecture
+    model = VisualEncoderDINO(
         embedding_dim=embedding_dim,
         dino_model=dino_model,
     )
 
+    # Load state dict
     model.load_state_dict(checkpoint["model_state_dict"])
     model.to(device)
     model.eval()
@@ -134,68 +138,233 @@ def load_tensorboard_scalars(
 
 
 def plot_training_curves(
-    run_names: list[str],
-    display_names: dict[str, str] | None = None,
-    colors: list[str] | None = None,
-    save_dir: str = "images/training_curves",
+    train_losses: list[float], val_losses: list[float], name: str
 ) -> None:
     """
-    Plots training curves from TensorBoard logs.
+    Plot and save professional training curves for loss.
 
     Args:
-        run_names: list of run names (folder names in runs/).
-        display_names: optional mapping of run names to display names.
-        colors: optional list of colors for each run.
-        save_dir: directory to save the plots.
+        train_losses: list of training losses per epoch.
+        val_losses: list of validation losses per epoch.
+        name: name for the saved plot.
     """
-    log_dir: str = "runs"
-    metrics: list[str] = ["train/loss", "val/loss"]
+    IMAGES_PATH.mkdir(exist_ok=True)
 
-    os.makedirs(save_dir, exist_ok=True)
+    # Set professional style
+    plt.style.use("seaborn-v0_8-darkgrid")
 
-    if display_names is None:
-        display_names = {name: name for name in run_names}
+    epochs = np.arange(1, len(train_losses) + 1)
 
-    if colors is None:
-        colors = ["#007acc", "#ff7700", "#33cc33", "#cc33cc", "#ff0066", "#00cc99"]
+    # Create figure with higher DPI for publication quality
+    _, ax = plt.subplots(figsize=(12, 7), dpi=300)
 
-    sns.set_style("whitegrid")
-    sns.set_palette("dark")
+    # Plot with professional styling
+    ax.plot(
+        epochs,
+        train_losses,
+        color="#2E86AB",
+        linewidth=2.5,
+        label="Training Loss",
+        marker="o",
+        markersize=4,
+        markevery=max(1, len(epochs) // 20),
+    )
 
-    for metric in metrics:
-        plt.figure(figsize=(10, 6))
+    ax.plot(
+        epochs,
+        val_losses,
+        color="#A23B72",
+        linewidth=2.5,
+        label="Validation Loss",
+        marker="s",
+        markersize=4,
+        markevery=max(1, len(epochs) // 20),
+    )
 
-        for i, run_name in enumerate(run_names):
-            run_path: str = os.path.join(log_dir, run_name)
-            data = load_tensorboard_scalars(run_path, metric)
+    # Customize axes
+    ax.set_xlabel("Epoch", fontsize=14, fontweight="bold")
+    ax.set_ylabel("Loss", fontsize=14, fontweight="bold")
+    ax.set_title(
+        "Training and Validation Loss Curves", fontsize=16, fontweight="bold", pad=20
+    )
 
-            if data:
-                steps, values = data
-                plt.plot(
-                    steps,
-                    values,
-                    label=display_names[run_name],
-                    linewidth=2.5,
-                    color=colors[i % len(colors)],
-                )
+    # Customize legend
+    ax.legend(fontsize=12, frameon=True, shadow=True, loc="best", fancybox=True)
 
-        plt.title(metric.replace("/", " - ").title(), fontsize=16, fontweight="bold")
-        plt.xlabel("Epochs", fontsize=14)
-        plt.ylabel("Value", fontsize=14)
-        plt.xticks(fontsize=12)
-        plt.yticks(fontsize=12)
-        plt.legend(fontsize=12, loc="best", frameon=True, fancybox=True, shadow=True)
-        plt.grid(True, linestyle="--", alpha=0.6)
+    # Customize grid
+    ax.grid(True, alpha=0.3, linestyle="--", linewidth=0.8)
 
-        image_path: str = os.path.join(save_dir, f"{metric.replace('/', '_')}.png")
-        plt.savefig(image_path, dpi=300, bbox_inches="tight")
-        plt.close()
+    # Customize tick parameters
+    ax.tick_params(axis="both", which="major", labelsize=11)
 
-        print(f"Saved plot: {image_path}")
+    # Add best validation loss annotation
+    best_val_idx = np.argmin(val_losses)
+    best_val_loss = val_losses[best_val_idx]
+    ax.annotate(
+        f"Best: {best_val_loss:.4f}",
+        xy=(best_val_idx + 1, best_val_loss),
+        xytext=(10, 10),
+        textcoords="offset points",
+        fontsize=10,
+        bbox=dict(boxstyle="round,pad=0.5", facecolor="yellow", alpha=0.7),
+        arrowprops=dict(
+            arrowstyle="->", connectionstyle="arc3,rad=0", color="black", lw=1.5
+        ),
+    )
+
+    # Tight layout for better spacing
+    plt.tight_layout()
+
+    # Save with high quality
+    plt.savefig(
+        IMAGES_PATH / f"{name}_loss.png",
+        dpi=300,
+        bbox_inches="tight",
+        facecolor="white",
+        edgecolor="none",
+    )
+    plt.close()
+
+    print(f"\nTraining curves saved to {IMAGES_PATH / f'{name}_loss.png'}")
+
+
+def visualize_embeddings_umap(
+    model_name: str,
+    num_samples: int = 500,
+    load_dir: str = "models",
+    device: str = "cuda",
+    random_state: int = 42,
+) -> None:
+    """
+    Visualize embeddings using UMAP for a given trained model.
+
+    Randomly samples images from the test set, extracts embeddings using the model,
+    and creates a 2D UMAP visualization colored by class.
+
+    Args:
+        model_name: name of the saved model (without .pth extension).
+        num_samples: number of samples to visualize (will be capped by dataset size).
+        load_dir: directory containing saved models.
+        device: device to run inference on.
+        random_state: random seed for reproducibility.
+    """
+
+    # Load the model
+    model = load_model(model_name, load_dir=load_dir, device=device)
+    model.eval()
+
+    # Load test dataset
+    test_dataset = COLDEvaluationDataset(f"{DATA_PATH}/test")
+
+    # Cap samples to dataset size
+    num_samples = min(num_samples, len(test_dataset))
+
+    # Randomly sample indices
+    np.random.seed(random_state)
+    indices = np.random.choice(len(test_dataset), size=num_samples, replace=False)
+
+    # Extract embeddings
+    embeddings: list[np.ndarray] = []
+    labels: list[int] = []
+
+    print(f"Extracting embeddings for {num_samples} samples...")
+    with torch.no_grad():
+        for idx in indices:
+            image, label = test_dataset[idx]
+            image = image.unsqueeze(0).to(device)
+            embedding = model.extract_features(image)
+            embeddings.append(embedding.cpu().numpy().squeeze())
+            labels.append(label)
+
+    embeddings_array = np.stack(embeddings)
+    labels_array = np.array(labels)
+
+    # Apply UMAP
+    print("Running UMAP dimensionality reduction...")
+    reducer = umap.UMAP(
+        n_components=2,
+        n_neighbors=15,
+        min_dist=0.1,
+        metric="cosine",  # Good for normalized embeddings
+        random_state=random_state,
+    )
+    embeddings_2d = reducer.fit_transform(embeddings_array)
+
+    # Create label name mapping (inverse of labels_correspondence)
+    label_names: dict[int, str] = {
+        0: "CR",
+        1: "2PO",
+        2: "RL",
+        3: "TL",
+        4: "TR",
+        5: "LO",
+        6: "1PO",
+        7: "KT",
+        8: "CNR",
+        9: "PA",
+        10: "LAB",
+        11: "ST",
+    }
+
+    # Plot
+    IMAGES_PATH.mkdir(exist_ok=True)
+    plt.style.use("seaborn-v0_8-whitegrid")
+
+    _, ax = plt.subplots(figsize=(14, 10), dpi=300)
+
+    # Get unique labels present in the sample
+    unique_labels = np.unique(labels_array)
+    colors = plt.cm.tab20(np.linspace(0, 1, len(unique_labels)))
+
+    for i, label in enumerate(unique_labels):
+        mask = labels_array == label
+        ax.scatter(
+            embeddings_2d[mask, 0],
+            embeddings_2d[mask, 1],
+            c=[colors[i]],
+            label=label_names.get(label, f"Class {label}"),
+            alpha=0.7,
+            s=50,
+            edgecolors="white",
+            linewidths=0.5,
+        )
+
+    ax.set_xlabel("UMAP Dimension 1", fontsize=14, fontweight="bold")
+    ax.set_ylabel("UMAP Dimension 2", fontsize=14, fontweight="bold")
+    ax.set_title(
+        f"UMAP Visualization of Embeddings\nModel: {model_name}",
+        fontsize=16,
+        fontweight="bold",
+        pad=20,
+    )
+
+    ax.legend(
+        fontsize=10,
+        frameon=True,
+        shadow=True,
+        loc="center left",
+        bbox_to_anchor=(1.02, 0.5),
+        title="Classes",
+        title_fontsize=12,
+    )
+
+    ax.tick_params(axis="both", which="major", labelsize=11)
+
+    plt.tight_layout()
+
+    save_path = IMAGES_PATH / f"{model_name}_umap.png"
+    plt.savefig(save_path, dpi=300, bbox_inches="tight", facecolor="white")
+    plt.close()
+
+    print(f"UMAP visualization saved to {save_path}")
 
 
 if __name__ == "__main__":
-    plot_training_curves(
-        run_names=["visual_encoder_dino_triplet_dim128"],
-        display_names={"visual_encoder_dino_triplet_dim128": "DINOv2 Triplet"},
+    loss: str = "contrastive"  # triplet or contrastive
+    assert loss in ["triplet", "contrastive"]
+
+    visualize_embeddings_umap(
+        model_name=f"visual_encoder_dino_{loss}_dim128_best",
+        num_samples=500,
+        device="cuda",
     )

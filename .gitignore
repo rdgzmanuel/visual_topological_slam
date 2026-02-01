@@ -16,3 +16,5 @@ graphs/
 detectors/
 topological_map/
 competition/
+
+.venv/

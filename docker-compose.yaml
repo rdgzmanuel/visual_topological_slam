@@ -1,0 +1,20 @@
+services:
+  dino-train:
+    build: .
+    container_name: dino_cold_training
+
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+    volumes:
+      - /home/202114339/workspace/visual_topological_slam/project:/workspace
+      - /home/202114339/workdata/cold_dataset:/data
+
+    working_dir: /workspace
+    stdin_open: true
+    tty: true
