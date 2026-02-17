@@ -134,7 +134,7 @@ Example usage:
 ros2 launch launch/project.launch.py loss:=triplet lab:=freiburg_a mode:=building
 ```
 
-Images will be generated during the experiment and after alignment. For the Saarbrücken A laboratory, graph_build.py and map_alignment.py need to be updated (Ctrl + F saarbruecken_a) for correctly plotting the images.
+Images will be generated during the experiment and after alignment. For the Saarbrücken A laboratory, `graph_build.py` and `map_alignment.py` need to be updated (Ctrl + F saarbruecken_a) for correctly plotting the images.
 
 ---
 
