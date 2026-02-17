@@ -11,6 +11,8 @@ build/
 install/
 log/
 
+vts_ws/images
+
 # SocialTech
 graphs/
 detectors/
