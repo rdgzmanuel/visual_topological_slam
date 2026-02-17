@@ -9,7 +9,7 @@
 
 A system for constructing topological maps of indoor environments using camera images and odometry measurements. Visual inputs are processed through a deep learning encoder to extract feature representations used for similarity-based node extraction. The system includes loop closure detection, trajectory fusion, semantic object annotation, and voice-controlled navigation.
 
-**Author:** Manuel Rodriguez Villegas
+**Authors:** Manuel Rodríguez Villegas, Jaime Boal Martín-Larrauri, Jesús Tordesillas Torres
 
 **School:** ICAI School of Engineering (Comillas Pontifical University)
 
