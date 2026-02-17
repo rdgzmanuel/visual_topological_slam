@@ -1,10 +1,10 @@
 # Data folders
-project/seq_data/
-project/data/
+encoder/seq_data/
+encoder/data/
 
 # Model folders
-project/runs/
-project/models/
+encoder/runs/
+encoder/models/
 
 # ROS2
 build/
@@ -19,7 +19,6 @@ competition/
 
 # Environment
 .venv/
-null
 docker-compose.yaml
 
 # Byte-compiled / optimized / DLL files
