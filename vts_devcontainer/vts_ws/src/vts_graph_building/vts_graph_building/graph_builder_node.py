@@ -45,12 +45,12 @@ class GraphBuilderNode(Node):
         self._n: int = self.get_parameter("n").get_parameter_value().integer_value
 
         # Peak detection parameters
-        self.declare_parameter("gamma_proportion", 0.25)
+        self.declare_parameter("gamma_proportion", 0.3)
         self._gamma_proportion: float = (
             self.get_parameter("gamma_proportion").get_parameter_value().double_value
         )
 
-        self.declare_parameter("delta_proportion", 0.08)
+        self.declare_parameter("delta_proportion", 0.1)
         self._delta_proportion: float = (
             self.get_parameter("delta_proportion").get_parameter_value().double_value
         )

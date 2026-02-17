@@ -445,10 +445,10 @@ class MapAligner:
             return
 
         for node in self.updated_graph.nodes.values():
-            x, y, _ = node.pose
+            y, x, _ = node.pose  # x, y, _ for saarbruecken_a
             px, py = world_to_pixel(
-                x, y, map_img.shape, self._world_limits, origin=self._origin
-            )
+                -x, y, map_img.shape, self._world_limits, origin=self._origin
+            )  # x, y, _ for saarbruecken_a
             cv2.circle(map_img, (px, py), 5, (0, 0, 255), -1)
 
     def _draw_edges(self, map_img: np.ndarray) -> None:

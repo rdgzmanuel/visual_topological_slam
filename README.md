@@ -1,5 +1,10 @@
 # Visual Topological SLAM using Deep Learning Techniques
 
+<p align="center">
+  <img src="vts_devcontainer/vts_ws/images/cover_images/cold-freiburg_part_b_seq3_sunny1__cold-freiburg_part_b_seq3_cloudy3_const.png" alt="Freiburg Ext" width="400"/>
+  <img src="vts_devcontainer/vts_ws/images/cover_images/cold-saarbruecken_part_b_seq4_sunny1__cold-saarbruecken_part_b_seq4_cloudy1_buena.png" alt="Saarbrücken Ext" width="400"/>
+</p>
+
 A system for constructing topological maps of indoor environments using camera images and odometry measurements. Visual inputs are processed through a deep learning encoder to extract feature representations used for similarity-based node extraction. The system includes loop closure detection, trajectory fusion, semantic object annotation, and voice-controlled navigation.
 
 **Author:** Manuel Rodriguez Villegas
