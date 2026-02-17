@@ -1,9 +1,11 @@
 # Visual Topological SLAM using Deep Learning Techniques
 
-A system for constructing topological maps of indoor environments using odometry measurements and camera images. Visual inputs are processed through a deep learning encoder to extract feature representations used for similarity-based node extraction. The system includes loop closure detection, trajectory fusion, semantic object annotation, and voice-controlled navigation.
+A system for constructing topological maps of indoor environments using camera images and odometry measurements. Visual inputs are processed through a deep learning encoder to extract feature representations used for similarity-based node extraction. The system includes loop closure detection, trajectory fusion, semantic object annotation, and voice-controlled navigation.
 
 **Author:** Manuel Rodriguez Villegas
-**University:** Comillas Pontifical University
+
+**School:** ICAI School of Engineering (Comillas Pontifical University)
+
 **Year:** 2026
 
 ---
@@ -35,7 +37,7 @@ This project implements the following pipeline:
 3. Odometry data refines node positions for added robustness.
 4. A loop closure detection and rewiring mechanism updates edges when a closure is detected.
 5. Two trajectories are aligned and their nodes fused to correct detection errors.
-6. Semantic information is incorporated by detecting objects in each node's image, describing them in natural language, and embedding the resulting sentence with a language model, enabling voice-controlled navigation.
+6. Semantic information is incorporated with a visual-language model, enabling voice-controlled navigation.
 
 ---
 
@@ -45,9 +47,9 @@ This project implements the following pipeline:
 visual_topological_slam/
 ├── encoder/              # Deep learning model training and evaluation
 │   ├── src/
-│   │   └── train.py      # Training entry point
-│   ├── config.py          # Hyperparameters and loss function selection
-│   └── evaluate.py        # Model evaluation
+│       ├── train.py      # Training entry point
+│       ├── config.py          # Hyperparameters and loss function selection
+│       └── evaluate.py        # Model evaluation
 ├── vts_devcontainer/      # ROS 2 dev container
 │   └── vts_ws/            # ROS 2 workspace
 │       └── launch/
@@ -69,7 +71,7 @@ The `encoder/` directory contains everything needed to train and evaluate the vi
 Edit `encoder/config.py` to set hyperparameters and select the loss function. The two supported loss functions are:
 
 - **Triplet loss** -- learns an embedding space where anchor-positive distances are smaller than anchor-negative distances by a margin.
-- **Contrastive loss** -- pulls similar pairs together and pushes dissimilar pairs apart in the embedding space.
+- **Contrastive loss** -- pulls similar pairs together and pushes different pairs apart in the embedding space.
 
 Adjust parameters such as learning rate, batch size, number of epochs, and other training settings directly in `config.py`.
 
@@ -129,7 +131,7 @@ The launch file accepts the following arguments to configure experiments:
 Example usage:
 
 ```bash
-ros2 launch launch/project.launch.py loss:=triplet lab:=freiburg_a mode:=command command_mode:=voice
+ros2 launch launch/project.launch.py loss:=triplet lab:=freiburg_a mode:=building
 ```
 
 ---
@@ -139,10 +141,10 @@ ros2 launch launch/project.launch.py loss:=triplet lab:=freiburg_a mode:=command
 If you use this work in your research, please cite:
 
 ```bibtex
-@thesis{rodriguez2025vts,
+@thesis{rodriguez2026vts,
   title   = {Visual Topological SLAM using Deep Learning Techniques},
-  author  = {Rodriguez Villegas, Manuel},
-  school  = {Comillas Pontifical University},
+  author  = {Rodríguez Villegas, Manuel and Boal Martín-Larrauri, Jaime and Tordesillas Torres, Jesús},
+  school  = {ICAI School of Engineering - Comillas Pontifical University},
   year    = {2026}
 }
 ```
