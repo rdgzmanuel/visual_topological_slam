@@ -1,10 +1,5 @@
 # Visual Topological SLAM using Deep Learning Techniques
 
-<p align="center">
-  <img src="docs/cover_images/cold-freiburg_part_b_seq3_sunny1__cold-freiburg_part_b_seq3_cloudy3_const.png" alt="Freiburg Ext" width="400"/>
-  <img src="docs/cover_images/cold-saarbruecken_part_b_seq4_sunny1__cold-saarbruecken_part_b_seq4_cloudy1.png" alt="Saarbrücken Ext" width="400"/>
-</p>
-
 <table align="center">
   <tr>
     <td align="center"><img src="docs/cover_images/cold-freiburg_part_b_seq3_sunny1__cold-freiburg_part_b_seq3_cloudy3_const.png" alt="Freiburg Ext" width="400"/><br/><em>Figure 1: Freiburg Extended</em></td>
