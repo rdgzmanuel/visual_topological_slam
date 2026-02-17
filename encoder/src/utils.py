@@ -8,8 +8,12 @@ import torch
 import umap
 from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
 
-from src.config import DATA_PATH, IMAGES_PATH
-from src.data import COLDEvaluationDataset
+try:
+    from src.config import DATA_PATH, IMAGES_PATH
+    from src.data import COLDEvaluationDataset
+except ImportError:
+    from config import DATA_PATH, IMAGES_PATH
+    from data import COLDEvaluationDataset
 
 
 def save_model(model: torch.nn.Module, name: str, save_dir: str = "models") -> None:
@@ -53,9 +57,13 @@ def load_model(
     Returns:
         loaded model.
     """
-    from src.models import VisualEncoderDINO
+    try:
+        from src.models import VisualEncoderDINO
+    except ImportError:
+        from models import VisualEncoderDINO
 
-    filepath = Path(load_dir) / f"{name}.pth"
+    encoder_dir: Path = Path(__file__).resolve().parent.parent  # points to encoder/
+    filepath: Path = encoder_dir / load_dir / f"{name}.pth"
 
     if not filepath.exists():
         raise FileNotFoundError(f"Model file not found: {filepath}")

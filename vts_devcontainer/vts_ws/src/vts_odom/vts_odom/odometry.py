@@ -1,5 +1,6 @@
 import numpy as np
 
+
 class OdometryClass:
     def __init__(self) -> None:
         """
@@ -8,14 +9,14 @@ class OdometryClass:
         pass
 
     def _compute_poses(
-        self, 
-        time_difference: float, 
-        x: float, 
-        y: float, 
+        self,
+        time_difference: float,
+        x: float,
+        y: float,
         theta: float,
-        prev_x: float, 
-        prev_y: float, 
-        prev_theta: float
+        prev_x: float,
+        prev_y: float,
+        prev_theta: float,
     ) -> tuple[float, float]:
         """
         Computes linear and angular velocity from previous and current poses.
@@ -38,8 +39,10 @@ class OdometryClass:
         w: float = delta_theta / time_difference
 
         return v, w
-    
-    def _compute_distance(self, x: float, y: float, prev_x: float, prev_y: float) -> float:
+
+    def _compute_distance(
+        self, x: float, y: float, prev_x: float, prev_y: float
+    ) -> float:
         """
         Computes Euclidean distance between two points.
 
@@ -56,7 +59,7 @@ class OdometryClass:
 
     def _normalize_angle(self, angle: float) -> float:
         """
-        
+
 
         Args:
             angle (float): _description_

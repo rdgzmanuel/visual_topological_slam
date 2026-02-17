@@ -74,7 +74,7 @@ class CameraNode(Node):
         Function that publishes features extracted from images.
         """
         self.get_logger().warn("Publising images")
-        seq_data_folder: str = "/workspace/project/seq_data"
+        seq_data_folder: str = "/workspace/encoder/seq_data"
         images_folder: str = "std_cam"
         trajectory_folder: str = os.path.join(seq_data_folder, trajectory)
         images_path: str = os.path.join(trajectory_folder, images_folder)

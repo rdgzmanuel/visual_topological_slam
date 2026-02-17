@@ -13,7 +13,7 @@ class GraphNodeClass:
         "openai/clip-vit-base-patch32"
     ).to(_device)
     _clip_processor: CLIPProcessor = CLIPProcessor.from_pretrained(
-        "openai/clip-vit-base-patch32"
+        "openai/clip-vit-base-patch32", use_fast=False
     )
 
     def __init__(

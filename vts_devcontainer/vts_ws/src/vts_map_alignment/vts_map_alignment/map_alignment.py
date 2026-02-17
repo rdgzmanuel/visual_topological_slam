@@ -468,15 +468,15 @@ class MapAligner:
             if node_1 is None or node_2 is None:
                 continue
 
-            x1, y1, _ = node_1.pose
-            x2, y2, _ = node_2.pose
+            y1, x1, _ = node_1.pose  # x1, y1, _ for saarbruecken_a
+            y2, x2, _ = node_2.pose  # x2, y2, _ for saarbruecken_a
 
             p1 = world_to_pixel(
-                x1, y1, map_img.shape, self._world_limits, origin=self._origin
-            )
+                -x1, y1, map_img.shape, self._world_limits, origin=self._origin
+            )  # x1, y1
             p2 = world_to_pixel(
-                x2, y2, map_img.shape, self._world_limits, origin=self._origin
-            )
+                -x2, y2, map_img.shape, self._world_limits, origin=self._origin
+            )  # x2, y2
             cv2.line(map_img, p1, p2, (0, 255, 0), 2)
 
     @staticmethod

@@ -17,7 +17,7 @@
     ],
     "postStartCommand": "sudo service xrdp start",
     "mounts": [
-        "source=${localWorkspaceFolder}/../project,target=/workspace/project,type=bind"
+        "source=${localWorkspaceFolder}/../encoder,target=/workspace/encoder,type=bind"
     ],
     "customizations": {
         "vscode": {

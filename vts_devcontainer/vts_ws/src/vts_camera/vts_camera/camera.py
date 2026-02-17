@@ -2,10 +2,10 @@ import sys
 
 import torch
 
-sys.path.append("/workspace/encoder/src")
+sys.path.insert(0, "/workspace/encoder")
 
-from models import VisualEncoderDINO
-from utils import load_model
+from src.models import VisualEncoderDINO
+from src.utils import load_model
 
 
 class Camera:
@@ -20,7 +20,10 @@ class Camera:
         Args:
             model_name (str): name of the model used for feature extraction
         """
-        self._model: VisualEncoderDINO = load_model(model_name)
+        device: torch.device = torch.device(
+            "cuda" if torch.cuda.is_available() else "cpu"
+        )
+        self._model: VisualEncoderDINO = load_model(model_name, device=device)
         self._model.eval()
 
         return None

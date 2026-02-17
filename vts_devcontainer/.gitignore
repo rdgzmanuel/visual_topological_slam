@@ -5,3 +5,6 @@ log/
 
 # Python
 __pycache__/
+
+# Images
+vts_ws/images/

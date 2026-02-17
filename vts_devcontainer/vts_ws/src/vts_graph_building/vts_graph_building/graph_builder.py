@@ -107,7 +107,7 @@ class GraphBuilder:
 
         # Paths
         self._images_path: str = os.path.join(
-            "../../project/seq_data/", self._trajectory, "std_cam"
+            "../../encoder/seq_data/", self._trajectory, "std_cam"
         )
 
         # Feature detection
@@ -991,7 +991,7 @@ class GraphBuilder:
         if map_img is None:
             return
 
-        x, y, _ = pose
+        y, x, _ = pose  # x, y for saarbruecken_a
         px, py = world_to_pixel(x, y, map_img.shape, self._world_limits, self._origin)
 
         if is_node:
@@ -1014,17 +1014,17 @@ class GraphBuilder:
             return
 
         for _, pose, _ in self._images_pose:
-            x, y, _ = pose
+            y, x, _ = pose  # x, y for saarbruecken_a
             px, py = world_to_pixel(
-                x, y, map_img.shape, self._world_limits, self._origin
-            )
+                -x, y, map_img.shape, self._world_limits, self._origin
+            )  # x, y for saarbruecken_a
             cv2.circle(map_img, (px, py), 1, (255, 0, 0), -1)
 
         for node, _ in self.graph:
-            x, y, _ = node.pose
+            y, x, _ = node.pose  # x, y for saarbruecken_a
             px, py = world_to_pixel(
-                x, y, map_img.shape, self._world_limits, self._origin
-            )
+                -x, y, map_img.shape, self._world_limits, self._origin
+            )  # x, y for saarbruecken_a
             cv2.circle(map_img, (px, py), 5, (0, 0, 255), -1)
 
         cv2.imwrite(output_path, map_img)
@@ -1040,22 +1040,22 @@ class GraphBuilder:
             return
 
         for node, _ in self.graph:
-            x, y, _ = node.pose
+            y, x, _ = node.pose  # x, y for saarbruecken_a
             px, py = world_to_pixel(
-                x, y, map_img.shape, self._world_limits, self._origin
-            )
+                -x, y, map_img.shape, self._world_limits, self._origin
+            )  # x, y for saarbruecken_a
             cv2.circle(map_img, (px, py), 5, (0, 0, 255), -1)
 
         for node_1, node_2 in self.graph:
             if node_1 is not None and node_2 is not None:
-                x1, y1, _ = node_1.pose
-                x2, y2, _ = node_2.pose
+                y1, x1, _ = node_1.pose  # x1, y1, _ for saarbruecken_a
+                y2, x2, _ = node_2.pose  # x2, y2, _ for saarbruecken_a
                 p1: PixelCoord = world_to_pixel(
-                    x1, y1, map_img.shape, self._world_limits, self._origin
-                )
+                    -x1, y1, map_img.shape, self._world_limits, self._origin
+                )  # x1, y1 for saarbruecken_a
                 p2: PixelCoord = world_to_pixel(
-                    x2, y2, map_img.shape, self._world_limits, self._origin
-                )
+                    -x2, y2, map_img.shape, self._world_limits, self._origin
+                )  # x2, y2 for saarbruecken_a
                 cv2.line(map_img, p1, p2, (0, 255, 0), 2)
 
         cv2.imwrite(output_path, map_img)

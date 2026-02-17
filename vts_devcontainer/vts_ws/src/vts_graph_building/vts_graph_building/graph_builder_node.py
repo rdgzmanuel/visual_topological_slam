@@ -173,7 +173,7 @@ class GraphBuilderNode(Node):
         self._timestamps = []
         self._poses = []
 
-        seq_data_folder: str = "/workspace/project/seq_data"
+        seq_data_folder: str = "/workspace/encoder/seq_data"
         odometry_file: str = os.path.join(
             seq_data_folder, trajectory, "odom_scans", "odom.tdf"
         )
