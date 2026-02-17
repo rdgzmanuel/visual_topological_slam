@@ -5,6 +5,13 @@
   <img src="docs/cover_images/cold-saarbruecken_part_b_seq4_sunny1__cold-saarbruecken_part_b_seq4_cloudy1.png" alt="Saarbrücken Ext" width="400"/>
 </p>
 
+<table align="center">
+  <tr>
+    <td align="center"><img src="docs/cover_images/cold-freiburg_part_b_seq3_sunny1__cold-freiburg_part_b_seq3_cloudy3_const.png" alt="Freiburg Ext" width="400"/><br/><em>Figure 1: Freiburg Extended</em></td>
+    <td align="center"><img src="docs/cover_images/cold-saarbruecken_part_b_seq4_sunny1__cold-saarbruecken_part_b_seq4_cloudy1.png" alt="Saarbrücken Ext" width="400"/><br/><em>Figure 2: Saarbrücken Extended</em></td>
+  </tr>
+</table>
+
 A system for constructing topological maps of indoor environments using camera images and odometry measurements. Visual inputs are processed through a deep learning encoder to extract feature representations used for similarity-based node extraction. The system includes loop closure detection, trajectory fusion, semantic object annotation, and voice-controlled navigation.
 
 **Author:** Manuel Rodriguez Villegas
