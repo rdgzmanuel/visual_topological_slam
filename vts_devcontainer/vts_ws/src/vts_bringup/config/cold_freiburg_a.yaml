@@ -1,0 +1,34 @@
+# COLD Freiburg part A — environment configuration.
+# Everything dataset-specific lives here, not in code.
+player:
+  dataset_root: "/workspaces/visual_topological_slam/encoder/seq_data"
+  sequences:
+    - "cold-freiburg_part_a_seq2_night1"
+    # - "cold-freiburg_part_a_seq2_sunny3"
+  images_subdir: "std_cam"
+  labels_subpath: "localization/places.lst"   # relative to each sequence dir
+  publish_rate_hz: 2.0
+  inter_sequence_pause_s: 5.0
+  odom_seed: 17
+  alpha: [0.05, 0.01, 0.02, 0.005]   # odometry motion-model noise (alpha1..4)
+
+mapping:
+  window_size: 30
+  extractor: "dinov2"        # "finetuned:src" to use your fine-tuned encoder
+  model_name: "visual_encoder_dino_contrastive_dim128_best"  # .pth name in <encoder_path>/models, or absolute path
+  encoder_path: "/workspaces/visual_topological_slam/encoder"  # encoder repo root (contains src/ and models/)
+  output_dir: "output/freiburg_a"
+  run_name: "freiburg_a"
+
+alignment:
+  output_dir: "output/freiburg_a"
+  graph_paths: [""]          # set paths to align pre-built graphs directly
+
+language:
+  graph_path: "output/freiburg_a/final_graph.pkl"
+  semantic_model: "openai/clip-vit-base-patch32"
+  mode: "manual"             # or "voice"
+  query_sentence: "corridor"
+  voice_trigger: "hey robot"
+  top_k: 3
+  output_dir: "output/freiburg_a/commands"
