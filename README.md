@@ -11,7 +11,7 @@
   </tr>
 </table>
 
-A single-run pipeline that builds a topological map of an indoor environment from a **monocular camera stream and odometry**, and exposes it to **natural-language navigation queries**. Images are encoded with a fine-tuned vision transformer; nodes are created by monitoring the algebraic connectivity of a sliding-window similarity graph; revisits are fused only when a robust visual outlier test and a covariance-aware geometric gate agree, which keeps the graph connected and free of false merges. A CLIP-based module grounds free-text queries (in any language) to the most relevant node.
+A single-run pipeline that builds a topological map of an indoor environment from a **monocular camera stream and odometry**, and exposes it to **natural-language navigation queries**. Images are encoded with a fine-tuned vision transformer; nodes are created by monitoring the algebraic connectivity of a sliding-window similarity graph; revisits are fused only when a robust visual outlier test and a covariance-aware geometric gate agree, which keeps the graph connected and free of false merges. A CLIP-based module grounds open-vocabulary free-text queries to the most relevant node.
 
 On four COLD environments the system produces single-component graphs with zero false merges and sub-5 cm node placement under drift-free odometry, and its place descriptor reaches 95.0 AR@1 across strong illumination changes — evaluated with the metric classes of the state-of-the-art topological mapper [PRISM-TopoMap](https://arxiv.org/abs/2404.01674).
 
@@ -50,7 +50,7 @@ Topological maps represent an environment as a graph, where nodes correspond to 
 The pipeline processes one synchronized `(image, odometry pose, covariance)` sample per frame:
 
 1. **Feature extraction** — a DINOv2-Small encoder with a projection head, fine-tuned with triplet or contrastive loss, produces a 128-D place descriptor per image.
-2. **Node extraction** — the descriptors of the most recent frames form a similarity graph; the second-smallest eigenvalue of its normalized Laplacian (algebraic connectivity, λ₂) is tracked online, and a detected valley signals an appearance change that creates a node. No hand-tuned thresholds.
+2. **Node extraction** — the descriptors of the most recent frames form a similarity graph; the second-smallest eigenvalue of its normalized Laplacian (algebraic connectivity, λ₂) is tracked online, and a detected valley signals an appearance change that creates a node. Valleys are detected with an adaptive, MAD-based margin rather than an absolute similarity threshold.
 3. **Revisit detection and fusion** — a candidate node is merged into an existing one only if it is (a) a mutual visual nearest neighbour that stands out as a robust MAD-based outlier over all other nodes, **and** (b) geometrically compatible under a covariance-aware gate. The fused node's descriptor is left unchanged, so one wrong merge cannot cascade into map-wide aliasing.
 4. **Language grounding** — each node stores up to three representative views embedded with CLIP; at query time, a sentence embedding retrieves the best-matching node, with calibrated rejection of ambiguous queries.
 

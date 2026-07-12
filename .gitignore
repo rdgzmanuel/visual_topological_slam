@@ -1,5 +1,6 @@
 # Report
 report/
+docs/design_decisions.md
 
 # Data folders
 encoder/seq_data/

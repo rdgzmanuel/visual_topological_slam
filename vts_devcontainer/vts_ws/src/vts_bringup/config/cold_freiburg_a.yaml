@@ -35,6 +35,6 @@ language:
   graph_path: "output/freiburg_a/final_graph.pkl"
   semantic_model: "openai/clip-vit-base-patch32"
   mode: "manual"             # "manual" (one-shot query_sentence) or "topic" (live /language/command)
-  query_sentence: "stairs"
+  query_sentence: "Go to the computers room."
   top_k: 3
   output_dir: "output/freiburg_a/commands"
