@@ -19,6 +19,10 @@ setup(
     entry_points={
         "console_scripts": [
             "evaluate_run = vts_evaluation.evaluate_run:main",
+            "calibrate_floorplan = vts_evaluation.calibrate_floorplan:main",
+            "plot_odometry = vts_evaluation.plot_odometry:main",
+            "compare_odometry_maps = vts_evaluation.compare_odometry_maps:main",
+            "place_recognition_eval = vts_evaluation.place_recognition_eval:main",
         ],
     },
 )

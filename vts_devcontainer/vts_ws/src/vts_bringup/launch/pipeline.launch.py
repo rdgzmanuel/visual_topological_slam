@@ -8,8 +8,11 @@ in the launch file is gone. Usage:
         config:=cold_freiburg_a.yaml mode:=building
 
 Modes:
-    building: player + graph builder + alignment.
+    building: player + graph builder (single-run; writes final_graph.pkl).
     command:  language node on an existing final_graph.pkl.
+
+Multi-map alignment was removed from the default flow to keep a single run
+robust; the vts_alignment package still exists for manual experiments.
 """
 
 from __future__ import annotations
@@ -52,15 +55,6 @@ def _make_nodes(context: object) -> list[Node]:
                 executable="graph_builder",
                 name="graph_builder",
                 parameters=[dict(config["mapping"])],
-                output="screen",
-            )
-        )
-        nodes.append(
-            Node(
-                package="vts_alignment",
-                executable="map_alignment",
-                name="map_alignment",
-                parameters=[dict(config["alignment"])],
                 output="screen",
             )
         )

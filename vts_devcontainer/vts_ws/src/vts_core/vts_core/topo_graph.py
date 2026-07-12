@@ -35,6 +35,11 @@ class TopoNode:
             at creation time. Used for probabilistic revisit gating instead
             of fixed metric thresholds.
         room_label: Optional ground-truth room label (evaluation only).
+        gt_pose: Optional ground-truth (x, y, theta) of the *representative*
+            frame that fixed this node's pose (the segment medoid), attached
+            for evaluation only and NEVER used by the mapping algorithm. It
+            must reference the same frame as ``pose`` so that placement error
+            measures odometric distortion rather than segmentation choice.
     """
 
     node_id: int
@@ -46,6 +51,7 @@ class TopoNode:
         default_factory=lambda: np.zeros((2, 2), dtype=np.float64)
     )
     room_label: str | None = None
+    gt_pose: Pose2D | None = None
 
     MAX_VIEWS: int = 3
 
@@ -83,6 +89,14 @@ class TopoGraph:
     def __init__(self, frame_id: str = "map") -> None:
         self.nodes: dict[int, TopoNode] = {}
         self.adjacency: dict[int, set[int]] = {}
+        # Relative SE(2) measurement per edge, captured AT EDGE-CREATION TIME,
+        # keyed (min_id, max_id) and oriented min -> max. Without stored
+        # measurements, pose-graph optimization built from current estimates
+        # is identically a no-op (zero residual by construction).
+        self.edge_measurements: dict[tuple[int, int], Pose2D] = {}
+        # Translational sigma per edge (same key convention), captured at
+        # creation; consumed by single-run and multi-map joint optimization.
+        self.edge_sigmas: dict[tuple[int, int], float] = {}
         self.frame_id: str = frame_id
         self._next_id: int = 0
 
@@ -116,6 +130,33 @@ class TopoGraph:
         """Remove an undirected edge if it exists."""
         self.adjacency.get(id_a, set()).discard(id_b)
         self.adjacency.get(id_b, set()).discard(id_a)
+        self.edge_measurements.pop((min(id_a, id_b), max(id_a, id_b)), None)
+        self.edge_sigmas.pop((min(id_a, id_b), max(id_a, id_b)), None)
+
+    def set_edge_measurement(
+        self, id_a: int, id_b: int, pose_a: Pose2D, pose_b: Pose2D
+    ) -> None:
+        """Store the relative measurement for edge (id_a, id_b).
+
+        Args:
+            id_a, id_b: Edge endpoints.
+            pose_a: Pose associated with id_a at measurement time.
+            pose_b: Pose associated with id_b at measurement time.
+        """
+        key: tuple[int, int] = (min(id_a, id_b), max(id_a, id_b))
+        first, second = (pose_a, pose_b) if id_a <= id_b else (pose_b, pose_a)
+        import numpy as _np
+
+        dx: float = second[0] - first[0]
+        dy: float = second[1] - first[1]
+        cos_t: float = float(_np.cos(first[2]))
+        sin_t: float = float(_np.sin(first[2]))
+        local_x: float = cos_t * dx + sin_t * dy
+        local_y: float = -sin_t * dx + cos_t * dy
+        d_theta: float = float(
+            (second[2] - first[2] + _np.pi) % (2.0 * _np.pi) - _np.pi
+        )
+        self.edge_measurements[key] = (local_x, local_y, d_theta)
 
     # ------------------------------------------------------------------ #
     # Queries
@@ -164,4 +205,8 @@ class TopoGraph:
             graph: TopoGraph = pickle.load(f)
         if not isinstance(graph, TopoGraph):
             raise TypeError(f"File {path} does not contain a TopoGraph")
+        if not hasattr(graph, "edge_measurements"):  # older pickles
+            graph.edge_measurements = {}
+        if not hasattr(graph, "edge_sigmas"):
+            graph.edge_sigmas = {}
         return graph

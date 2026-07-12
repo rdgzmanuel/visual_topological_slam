@@ -1,17 +1,26 @@
-"""Language commands ROS2 node (English-only).
+"""Language commands ROS2 node (English-only, text-driven).
+
+Maps a natural-language place description (e.g. "take me to the printer
+area") to a node of the topological map and publishes its pose as a
+navigation target.
 
 Modes:
-- ``manual``: answers the ``query_sentence`` parameter once, saves the
-  top-k node views for inspection, and reports calibrated posteriors.
-- ``voice``: continuous loop — trigger word, then a command — using Google's
-  online recognizer (stays online per your requirement).
+- ``manual``: answer the ``query_sentence`` parameter once, write a JSON
+  report and the top-k node views to ``output_dir``, then exit. The report
+  file is the reliable artifact; the ROS messages are also published and the
+  node spins briefly so DDS can deliver them.
+- ``topic``: stay alive and answer every std_msgs/String published on
+  ``/language/command``. Use this for interactive querying.
 
-The navigation target is published as ``geometry_msgs/Pose2D`` on
-``/language/navigation_target`` together with a JSON report on
-``/language/result``. When the retriever flags the answer as ambiguous
-(top-2 posterior margin too small), no target is published and the top-k
-candidates are reported instead — propagating uncertainty rather than
-silently committing to a wrong node, which was a major failure mode before.
+Outputs per query:
+- ``geometry_msgs/Pose2D`` on ``/language/navigation_target`` (only when the
+  answer is confident — see retrieval rejection rule),
+- ``std_msgs/String`` (JSON report) on ``/language/result``,
+- ``<output_dir>/result.json`` and ``<output_dir>/rank*_node*.png`` on disk.
+
+When the retriever flags the answer as ambiguous (top-2 posterior margin too
+small) no target is published; the top-k candidates are still reported so the
+caller can disambiguate rather than committing to a wrong node.
 """
 
 from __future__ import annotations
@@ -19,6 +28,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 from contextlib import suppress
 
 import cv2
@@ -41,7 +51,6 @@ class CommandsNode(Node):
         self.declare_parameter("semantic_model", "openai/clip-vit-base-patch32")
         self.declare_parameter("mode", "manual")
         self.declare_parameter("query_sentence", "corridor")
-        self.declare_parameter("voice_trigger", "hey robot")
         self.declare_parameter("top_k", 3)
         self.declare_parameter("output_dir", "output/commands")
 
@@ -51,14 +60,11 @@ class CommandsNode(Node):
         model_name: str = (
             self.get_parameter("semantic_model").get_parameter_value().string_value
         )
-        self._mode: str = (
+        self.mode: str = (
             self.get_parameter("mode").get_parameter_value().string_value
         )
         self._query_sentence: str = (
             self.get_parameter("query_sentence").get_parameter_value().string_value
-        )
-        self._voice_trigger: str = (
-            self.get_parameter("voice_trigger").get_parameter_value().string_value
         )
         self._top_k: int = (
             self.get_parameter("top_k").get_parameter_value().integer_value
@@ -76,17 +82,29 @@ class CommandsNode(Node):
         graph: TopoGraph = TopoGraph.load(graph_path)
         encoder: SemanticEncoder = SemanticEncoder(model_name)
         self._retriever: PlaceRetriever = PlaceRetriever(encoder, graph)
+        self.get_logger().info(
+            f"Loaded graph '{graph_path}' "
+            f"({len(graph.nodes)} nodes) with model '{model_name}'."
+        )
 
-        if self._mode == "manual":
-            self._answer(self._query_sentence)
-            raise SystemExit(0)
-        if self._mode == "voice":
-            self._voice_loop()
-        else:
-            raise ValueError(f"Invalid mode: {self._mode}")
+        if self.mode == "topic":
+            self.create_subscription(
+                String, "/language/command", self._on_command, 10
+            )
+            self.get_logger().info(
+                "Topic mode: publish a query on /language/command "
+                "(std_msgs/String)."
+            )
 
     # ------------------------------------------------------------------ #
-    def _answer(self, sentence: str) -> None:
+    def _on_command(self, msg: String) -> None:
+        query: str = msg.data.strip()
+        if query:
+            self.get_logger().info(f"Command: {query}")
+            self.answer(query)
+
+    def answer(self, sentence: str) -> dict[str, object]:
+        """Answer one query: publish, log, and persist the report to disk."""
         ranked, confident = self._retriever.query(sentence, top_k=self._top_k)
 
         report: dict[str, object] = {
@@ -96,19 +114,23 @@ class CommandsNode(Node):
                 {
                     "node_id": node.node_id,
                     "posterior": round(posterior, 4),
+                    "score": round(score, 4),
                     "pose": list(node.pose),
                     "room_label": node.room_label,
                 }
-                for node, posterior in ranked
+                for node, posterior, score in ranked
             ],
         }
+
         out: String = String()
         out.data = json.dumps(report)
         self._result_pub.publish(out)
         self.get_logger().info(json.dumps(report, indent=2))
 
-        for rank, (node, posterior) in enumerate(ranked, start=1):
-            self._save_views(node, rank, posterior)
+        with open(os.path.join(self._output_dir, "result.json"), "w") as f:
+            json.dump(report, f, indent=2)
+        for rank, (node, _, _) in enumerate(ranked, start=1):
+            self._save_views(node, rank)
 
         if ranked and confident:
             best: TopoNode = ranked[0][0]
@@ -117,63 +139,45 @@ class CommandsNode(Node):
             target.y = float(best.pose[1])
             target.theta = float(best.pose[2])
             self._target_pub.publish(target)
+            self.get_logger().info(
+                f"Navigation target: node {best.node_id} at {best.pose}."
+            )
         elif ranked:
             self.get_logger().warn(
-                "Ambiguous query: posterior margin below bound; "
-                "reporting top-k without committing to a target."
+                "Ambiguous query: posterior margin below bound; reporting "
+                "top-k without committing to a target."
             )
         else:
             self.get_logger().warn("No nodes with semantic views in the graph.")
+        return report
 
-    def _save_views(self, node: TopoNode, rank: int, posterior: float) -> None:
+    def _save_views(self, node: TopoNode, rank: int) -> None:
         for view_index, view in enumerate(node.views):
             path: str = os.path.join(
                 self._output_dir,
-                f"rank{rank}_node{node.node_id}_p{posterior:.3f}_v{view_index}.png",
+                f"rank{rank}_node{node.node_id}_v{view_index}.png",
             )
             cv2.imwrite(path, view)
 
-    # ------------------------------------------------------------------ #
-    def _voice_loop(self) -> None:
-        import speech_recognition as sr  # local import: optional dependency
 
-        recognizer: sr.Recognizer = sr.Recognizer()
-        try:
-            microphone: sr.Microphone = sr.Microphone()
-        except OSError as error:
-            self.get_logger().error(f"No microphone available: {error}")
-            raise SystemExit(1)
-
-        self.get_logger().info(
-            f"Voice mode. Say '{self._voice_trigger}' followed by a command."
-        )
-        while rclpy.ok():
-            try:
-                with microphone as source:
-                    audio: sr.AudioData = recognizer.listen(source)
-                heard: str = recognizer.recognize_google(
-                    audio, language="en-US"
-                ).lower()
-                if self._voice_trigger not in heard:
-                    continue
-                with microphone as source:
-                    audio = recognizer.listen(source, timeout=5.0)
-                command: str = recognizer.recognize_google(audio, language="en-US")
-                self.get_logger().info(f"Command: {command}")
-                self._answer(command)
-            except sr.UnknownValueError:
-                self.get_logger().warn("Could not understand audio.")
-            except sr.RequestError as error:
-                self.get_logger().error(f"Speech recognition error: {error}")
-            except sr.WaitTimeoutError:
-                self.get_logger().warn("Voice command timeout.")
+def _flush(node: CommandsNode, seconds: float = 1.0) -> None:
+    """Spin briefly so queued publications are delivered before exit."""
+    deadline: float = time.time() + seconds
+    while time.time() < deadline:
+        rclpy.spin_once(node, timeout_sec=0.1)
 
 
 def main(args: list[str] | None = None) -> None:
     rclpy.init(args=args)
-    with suppress(KeyboardInterrupt, SystemExit):
+    with suppress(KeyboardInterrupt):
         node: CommandsNode = CommandsNode()
-        rclpy.spin(node)
+        if node.mode == "manual":
+            node.answer(node._query_sentence)
+            _flush(node)
+        elif node.mode == "topic":
+            rclpy.spin(node)
+        else:
+            node.get_logger().error(f"Invalid mode: {node.mode}")
         node.destroy_node()
     rclpy.try_shutdown()
     sys.exit(0)

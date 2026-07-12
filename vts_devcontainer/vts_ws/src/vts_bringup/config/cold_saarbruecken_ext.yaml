@@ -1,34 +1,36 @@
-# COLD Freiburg part A — environment configuration.
+# COLD Saarbrücken part B — environment configuration.
 # Everything dataset-specific lives here, not in code.
 player:
-  dataset_root: "/workspaces/visual_topological_slam/encoder/seq_data"
+  dataset_root: "/workspace/encoder/seq_data"
+  # Single-run pipeline: map one sequence at a time.
   sequences:
     - "cold-saarbruecken_part_b_seq4_sunny1"
-    - "cold-saarbruecken_part_b_seq4_cloudy1"
   images_subdir: "std_cam"
   labels_subpath: "localization/places.lst"   # relative to each sequence dir
-  publish_rate_hz: 2.0
+  publish_rate_hz: 5.0
   inter_sequence_pause_s: 5.0
   odom_seed: 17
-  alpha: [0.05, 0.01, 0.02, 0.005]   # odometry motion-model noise (alpha1..4)
+  alpha: [0.0, 0.0, 0.0, 0.0]   # odometry motion-model noise (alpha1..4)
 
 mapping:
   window_size: 30
-  extractor: "dinov2"        # "finetuned:src" to use your fine-tuned encoder
+  # EXPERIMENT (2026-06-15): create MORE nodes (lower valley_k) + merge similar
+  # ones more readily (lower visual_outlier_k, wider merge_radius), to better
+  # represent under-sampled places while collapsing over-sampled ones. Revert
+  # to valley_k: 2.5 / merge_radius: 3.0 / visual_outlier_k: 2.0 if worse.
+  valley_k: 0.5           # node-creation sensitivity; LOWER = MORE nodes (1.5->2.5 ~ 34->24 nodes)
+  merge_radius: 0.5         # metres within which a visually-matched revisit MERGES; RAISE for more merges / fewer nodes
+  visual_outlier_k: 0.5      # visual revisit strictness (MAD multiplier); LOWER for more merges / loop closures, RAISE for stricter
+  extractor: "finetuned:src"  # thesis fine-tuned DINO encoder; "dinov2" for stock fallback
   model_name: "visual_encoder_dino_contrastive_dim128_best"  # .pth name in <encoder_path>/models, or absolute path
-  encoder_path: "/workspaces/visual_topological_slam/encoder"  # encoder repo root (contains src/ and models/)
+  encoder_path: "/workspace/encoder"  # encoder repo root (contains src/ and models/)
   output_dir: "output/saarbruecken_ext"
   run_name: "saarbruecken_ext"
-
-alignment:
-  output_dir: "output/saarbruecken_ext"
-  graph_paths: [""]          # set paths to align pre-built graphs directly
 
 language:
   graph_path: "output/saarbruecken_ext/final_graph.pkl"
   semantic_model: "openai/clip-vit-base-patch32"
-  mode: "manual"             # or "voice"
+  mode: "manual"             # "manual" (one-shot query_sentence) or "topic" (live /language/command)
   query_sentence: "corridor"
-  voice_trigger: "hey robot"
   top_k: 3
   output_dir: "output/saarbruecken_ext/commands"

@@ -70,6 +70,9 @@ class MapAlignmentNode(Node):
         else:
             self.get_logger().info(f"Aligning {len(graphs)} graphs...")
             fused = self._aligner.align(graphs)
+            self.get_logger().info(
+                f"Alignment diagnostics: {json.dumps(self._aligner.last_stats)}"
+            )
 
         os.makedirs(self._output_dir, exist_ok=True)
         final_path: str = os.path.join(self._output_dir, "final_graph.pkl")

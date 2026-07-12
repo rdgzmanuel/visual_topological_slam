@@ -49,6 +49,30 @@ _PROMPT_TEMPLATES: tuple[str, ...] = (
 # query-independent criterion, not a similarity cutoff.
 _MIN_POSTERIOR_MARGIN: float = 0.1
 
+# Imperative command phrasings stripped to recover the bare place description,
+# so "take me to the printer area" embeds as "printer area" (the templates
+# expect a noun phrase, not a full sentence).
+_COMMAND_PREFIXES: tuple[str, ...] = (
+    "take me to", "bring me to", "lead me to", "guide me to", "navigate to",
+    "go to", "drive to", "move to", "head to", "walk to", "get to",
+    "show me", "find", "locate", "where is", "where's", "where are",
+    "i want to go to", "can you take me to",
+)
+
+
+def place_phrase(query: str) -> str:
+    """Reduce a natural-language command to its place noun phrase."""
+    phrase: str = query.strip().lower().rstrip(" ?.!")
+    for prefix in _COMMAND_PREFIXES:
+        if phrase.startswith(prefix):
+            phrase = phrase[len(prefix):].strip()
+            break
+    for article in ("the ", "a ", "an "):
+        if phrase.startswith(article):
+            phrase = phrase[len(article):]
+            break
+    return phrase or query.strip().lower()
+
 
 class SemanticEncoder:
     """Wrapper around a Hugging Face CLIP/SigLIP checkpoint."""
@@ -70,6 +94,23 @@ class SemanticEncoder:
         """The model's learned similarity temperature."""
         return self._logit_scale
 
+    @staticmethod
+    def _as_embedding(output: object) -> torch.Tensor:
+        """Extract the projected embedding tensor across transformers versions.
+
+        transformers 5.x returns a model-output object from
+        ``get_image_features`` / ``get_text_features`` whose ``pooler_output``
+        is already the projected (shared-space) embedding; 4.x returns the
+        tensor directly. Handle both.
+        """
+        if torch.is_tensor(output):
+            return output
+        for attr in ("image_embeds", "text_embeds", "pooler_output"):
+            value = getattr(output, attr, None)
+            if value is not None:
+                return value
+        return output.last_hidden_state[:, 0]  # type: ignore[attr-defined]
+
     @torch.no_grad()
     def embed_images(self, images_bgr: list[np.ndarray]) -> np.ndarray:
         """Embed BGR images; returns (n, d) L2-normalized float32."""
@@ -79,18 +120,28 @@ class SemanticEncoder:
         inputs = self._processor(images=pil_images, return_tensors="pt").to(
             self._device
         )
-        features: torch.Tensor = self._model.get_image_features(**inputs)
+        features: torch.Tensor = self._as_embedding(
+            self._model.get_image_features(**inputs)
+        )
         features = features / features.norm(dim=-1, keepdim=True)
         return features.cpu().numpy().astype(np.float32)
 
     @torch.no_grad()
     def embed_text(self, query: str) -> np.ndarray:
-        """Embed a text query through the prompt-template ensemble."""
-        prompts: list[str] = [t.format(query.strip().lower()) for t in _PROMPT_TEMPLATES]
+        """Embed a text query through the prompt-template ensemble.
+
+        The query is first reduced to its place noun phrase (so a full command
+        like "take me to the kitchen" embeds as "kitchen") and then averaged
+        over the prompt templates.
+        """
+        phrase: str = place_phrase(query)
+        prompts: list[str] = [t.format(phrase) for t in _PROMPT_TEMPLATES]
         inputs = self._processor(
             text=prompts, return_tensors="pt", padding=True
         ).to(self._device)
-        features: torch.Tensor = self._model.get_text_features(**inputs)
+        features: torch.Tensor = self._as_embedding(
+            self._model.get_text_features(**inputs)
+        )
         features = features / features.norm(dim=-1, keepdim=True)
         mean: torch.Tensor = features.mean(dim=0)
         mean = mean / mean.norm()
@@ -114,7 +165,7 @@ class PlaceRetriever:
 
     def query(
         self, sentence: str, top_k: int = 3
-    ) -> tuple[list[tuple[TopoNode, float]], bool]:
+    ) -> tuple[list[tuple[TopoNode, float, float]], bool]:
         """Retrieve the nodes best matching a sentence.
 
         Args:
@@ -122,7 +173,9 @@ class PlaceRetriever:
             top_k: Number of candidates to return.
 
         Returns:
-            (ranked list of (node, posterior probability), confident_flag).
+            (ranked list of (node, posterior probability, raw cosine score),
+            confident_flag). The raw cosine score is the multi-view max-pooled
+            image/text similarity, surfaced for debugging and inspection.
             ``confident_flag`` is False when the top-2 posterior margin is
             below the rejection bound — the caller should treat the answer
             as ambiguous (e.g. ask the user to disambiguate among top-k).
@@ -142,16 +195,19 @@ class PlaceRetriever:
         if not node_ids:
             return [], False
 
-        logits: np.ndarray = self._encoder.logit_scale * np.array(
-            scores, dtype=np.float64
-        )
+        score_array: np.ndarray = np.array(scores, dtype=np.float64)
+        logits: np.ndarray = self._encoder.logit_scale * score_array
         logits -= logits.max()
         posterior: np.ndarray = np.exp(logits)
         posterior /= posterior.sum()
 
         order: np.ndarray = np.argsort(posterior)[::-1]
-        ranked: list[tuple[TopoNode, float]] = [
-            (self._graph.nodes[node_ids[int(i)]], float(posterior[int(i)]))
+        ranked: list[tuple[TopoNode, float, float]] = [
+            (
+                self._graph.nodes[node_ids[int(i)]],
+                float(posterior[int(i)]),
+                float(score_array[int(i)]),
+            )
             for i in order[:top_k]
         ]
 

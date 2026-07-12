@@ -1,4 +1,11 @@
-"""Floorplan visualization utilities (optional, dataset-specific by nature).
+"""Floorplan visualization utilities (LEGACY similarity-only fitter).
+
+SUPERSEDED by ``vts_evaluation.calibrate_floorplan``, which fits a thin-plate
+spline from room-centroid correspondences and is consumed directly by the
+evaluator's ``--floorplan`` overlay. A rigid 4-DoF similarity (this file) is
+too stiff for the COLD ground-truth-vs-CAD warp; the TPS captures it without
+the oscillation of the original 5th-degree polynomial. Kept only for
+reference.
 
 The thesis used hand-fitted 5th-degree polynomial weights per environment to
 warp odometry coordinates onto a floorplan PNG. Visualization is the one
