@@ -6,7 +6,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import umap
-from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
 
 try:
     from src.config import DATA_PATH, IMAGES_PATH
@@ -132,6 +131,10 @@ def load_tensorboard_scalars(
     Returns:
         tuple of (steps, values) if metric exists, otherwise None.
     """
+    from tensorboard.backend.event_processing.event_accumulator import (
+        EventAccumulator,
+    )
+
     event_acc: EventAccumulator = EventAccumulator(model_dir)
     event_acc.Reload()
 
@@ -158,13 +161,15 @@ def plot_training_curves(
     """
     IMAGES_PATH.mkdir(exist_ok=True)
 
-    # Set professional style
-    plt.style.use("seaborn-v0_8-darkgrid")
+    # Set professional style (white background)
+    plt.style.use("seaborn-v0_8-whitegrid")
 
     epochs = np.arange(1, len(train_losses) + 1)
 
     # Create figure with higher DPI for publication quality
-    _, ax = plt.subplots(figsize=(12, 7), dpi=300)
+    fig, ax = plt.subplots(figsize=(12, 7), dpi=300)
+    fig.patch.set_facecolor("white")
+    ax.set_facecolor("white")
 
     # Plot with professional styling
     ax.plot(
@@ -196,8 +201,8 @@ def plot_training_curves(
         "Training and Validation Loss Curves", fontsize=16, fontweight="bold", pad=20
     )
 
-    # Customize legend
-    ax.legend(fontsize=12, frameon=True, shadow=True, loc="best", fancybox=True)
+    # Customize legend (slightly larger)
+    ax.legend(fontsize=16, frameon=True, shadow=True, loc="best", fancybox=True)
 
     # Customize grid
     ax.grid(True, alpha=0.3, linestyle="--", linewidth=0.8)
@@ -223,17 +228,18 @@ def plot_training_curves(
     # Tight layout for better spacing
     plt.tight_layout()
 
-    # Save with high quality
-    plt.savefig(
-        IMAGES_PATH / f"{name}_loss.png",
-        dpi=300,
-        bbox_inches="tight",
-        facecolor="white",
-        edgecolor="none",
-    )
+    # Save with high quality (PDF for the report + PNG for quick viewing)
+    for ext in ("pdf", "png"):
+        plt.savefig(
+            IMAGES_PATH / f"{name}_loss.{ext}",
+            dpi=300,
+            bbox_inches="tight",
+            facecolor="white",
+            edgecolor="none",
+        )
     plt.close()
 
-    print(f"\nTraining curves saved to {IMAGES_PATH / f'{name}_loss.png'}")
+    print(f"\nTraining curves saved to {IMAGES_PATH / f'{name}_loss.pdf'}")
 
 
 def visualize_embeddings_umap(
@@ -347,24 +353,32 @@ def visualize_embeddings_umap(
     )
 
     ax.legend(
-        fontsize=10,
+        fontsize=15,
         frameon=True,
         shadow=True,
         loc="center left",
         bbox_to_anchor=(1.02, 0.5),
         title="Classes",
-        title_fontsize=12,
+        title_fontsize=17,
+        markerscale=1.6,
+        labelspacing=0.6,
     )
 
     ax.tick_params(axis="both", which="major", labelsize=11)
 
     plt.tight_layout()
 
-    save_path = IMAGES_PATH / f"{model_name}_umap.png"
-    plt.savefig(save_path, dpi=300, bbox_inches="tight", facecolor="white")
+    # Save PDF for the report + PNG for quick viewing
+    for ext in ("pdf", "png"):
+        plt.savefig(
+            IMAGES_PATH / f"{model_name}_umap.{ext}",
+            dpi=300,
+            bbox_inches="tight",
+            facecolor="white",
+        )
     plt.close()
 
-    print(f"UMAP visualization saved to {save_path}")
+    print(f"UMAP visualization saved to {IMAGES_PATH / f'{model_name}_umap.pdf'}")
 
 
 if __name__ == "__main__":

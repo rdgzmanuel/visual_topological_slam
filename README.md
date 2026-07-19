@@ -13,7 +13,7 @@
 
 A single-run pipeline that builds a topological map of an indoor environment from a **monocular camera stream and odometry**, and exposes it to **natural-language navigation queries**. Images are encoded with a fine-tuned vision transformer; nodes are created by monitoring the algebraic connectivity of a sliding-window similarity graph; revisits are fused only when a robust visual outlier test and a covariance-aware geometric gate agree, which keeps the graph connected and free of false merges. A CLIP-based module grounds open-vocabulary free-text queries to the most relevant node.
 
-On four COLD environments the system produces single-component graphs with zero false merges and sub-5 cm node placement under drift-free odometry, and its place descriptor reaches 95.0 AR@1 across strong illumination changes — evaluated with the metric classes of the state-of-the-art topological mapper [PRISM-TopoMap](https://arxiv.org/abs/2404.01674).
+On four COLD environments the system produces single-component graphs with false merges almost entirely suppressed, and its place descriptor reaches 95.0 AR@1 across strong illumination changes. It is compared against the state-of-the-art topological mapper [PRISM-TopoMap](https://arxiv.org/abs/2404.01674) at two levels: against its published metric classes, and head-to-head by running its public implementation on the same COLD sequences with identical odometry (see [`prism_comparison/`](prism_comparison/)).
 
 **Authors:** Manuel Rodríguez Villegas, Jaime Boal Martín-Larrauri, Jesús Tordesillas Torres
 
@@ -60,16 +60,18 @@ Full details in the paper (see [Citation](#citation)).
 
 ## Results
 
-Structural quality of the single-run maps (drift-free odometry):
+Structural quality of the single-run maps. Odometry is synthesized from ground truth with the standard probabilistic motion model (noise `alpha = [0.025, 0.005, 0.01, 0.0025]`, seed 17), used continuously as the local motion estimate and re-anchored at every confirmed loop closure; the placement RMSE reflects the drift accumulated between re-anchoring events.
 
 | Environment | Nodes | Edges | Components | Placement RMSE (m) | False merges |
 |---|---|---|---|---|---|
-| Freiburg A | 29 | 34 | 1 | 0.007 | 0 |
-| Freiburg Ext. | 19 | 22 | 1 | 0.010 | 0 |
-| Saarbrücken A | 34 | 37 | 1 | 0.026 | 0 |
-| Saarbrücken Ext. | 26 | 27 | 1 | 0.042 | 0 |
+| Freiburg A | 25 | 28 | 1 | 7.75 | 0.07 |
+| Freiburg Ext. | 21 | 23 | 1 | 4.11 | 0.00 |
+| Saarbrücken A | 25 | 24 | 1 | 7.42 | 0.00 |
+| Saarbrücken Ext. | 18 | 18 | 1 | 2.49 | 0.00 |
 
-Place-recognition Average Recall (%, 5 m threshold, mean over the four environments): **81.0 AR@1 / 91.7 AR@5** within-run, **95.0 AR@1 / 98.6 AR@5** across illumination conditions (database and queries from different sessions of the same route). Graph maintenance runs at **0.31 ms/frame** (excluding the encoder forward pass) and the descriptors-only map occupies **~16 kB**.
+Place-recognition Average Recall (%, 5 m threshold, mean over the four environments): **81.0 AR@1 / 91.7 AR@5** within-run, **95.0 AR@1 / 98.6 AR@5** across illumination conditions (database and queries from different sessions of the same route). Graph maintenance runs at **0.32 ms/frame** (excluding the encoder forward pass) and the descriptors-only map occupies **~13 kB**.
+
+In the head-to-head comparison ([`prism_comparison/`](prism_comparison/)), PRISM-TopoMap run on the same sequences with identical odometry also produces connected maps with comparable metric distortion, but its LiDAR-native place recognition (MinkLoc3D trained on 3D LiDAR) drops to a mean 41.0 AR@1 on COLD's planar range data — against 81.0 for this system's monocular descriptor — with false-merge rates up to 0.23. Vertically extruding the 2D scans to mimic 3D structure does not close the gap.
 
 ## Repository Structure
 
@@ -91,7 +93,11 @@ visual_topological_slam/
 │       │   ├── vts_viz/        # Visualization helpers
 │       │   └── vts_bringup/    # pipeline.launch.py + per-environment configs
 │       └── queries_example.json
-├── report/                     # Paper sources (LaTeX)
+├── prism_comparison/           # Head-to-head PRISM-TopoMap baseline on COLD
+│   ├── driver/                 # Deterministic offline replay of their pipeline
+│   ├── eval/                   # Same-metrics evaluation + floorplan overlays
+│   ├── tools/                  # COLD → input-bundle converter
+│   └── vendor/                 # Pinned-commit fetch script + device patch
 ├── docs/                       # Cover images
 ├── Dockerfile
 └── requirements.txt
@@ -162,7 +168,7 @@ This plays the sequence, builds the graph online, and writes to `output/freiburg
 - `graph_0_node_gt.json` — per-node ground truth (evaluation only),
 - `graph_0_performance.json` — map-update / loop-closure timings and map size.
 
-Repeat with `cold_freiburg_ext.yaml`, `cold_saarbruecken_a.yaml`, `cold_saarbruecken_ext.yaml`. The committed configs use drift-free odometry (`alpha: [0,0,0,0]`), matching the published results; raise `alpha` to study drift.
+Repeat with `cold_freiburg_ext.yaml`, `cold_saarbruecken_a.yaml`, `cold_saarbruecken_ext.yaml`. The committed configs use the noisy synthesized odometry of the published results (`alpha: [0.025, 0.005, 0.01, 0.0025]`, `odom_seed: 17`); set `alpha` to zeros for a drift-free replay, or raise it to study stronger drift.
 
 ### 6. Evaluating a Map
 

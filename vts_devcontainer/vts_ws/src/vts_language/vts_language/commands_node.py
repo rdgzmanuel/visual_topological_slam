@@ -16,7 +16,7 @@ Outputs per query:
 - ``geometry_msgs/Pose2D`` on ``/language/navigation_target`` (only when the
   answer is confident — see retrieval rejection rule),
 - ``std_msgs/String`` (JSON report) on ``/language/result``,
-- ``<output_dir>/result.json`` and ``<output_dir>/rank*_node*.png`` on disk.
+- ``<output_dir>/result.json`` and ``<output_dir>/rank*_node*.pdf`` on disk.
 
 When the retriever flags the answer as ambiguous (top-2 posterior margin too
 small) no target is published; the top-k candidates are still reported so the
@@ -33,6 +33,7 @@ from contextlib import suppress
 
 import cv2
 import rclpy
+from PIL import Image
 from geometry_msgs.msg import Pose2D
 from rclpy.node import Node
 from std_msgs.msg import String
@@ -155,9 +156,10 @@ class CommandsNode(Node):
         for view_index, view in enumerate(node.views):
             path: str = os.path.join(
                 self._output_dir,
-                f"rank{rank}_node{node.node_id}_v{view_index}.png",
+                f"rank{rank}_node{node.node_id}_v{view_index}.pdf",
             )
-            cv2.imwrite(path, view)
+            rgb = cv2.cvtColor(view, cv2.COLOR_BGR2RGB)
+            Image.fromarray(rgb).save(path, "PDF", resolution=150.0)
 
 
 def _flush(node: CommandsNode, seconds: float = 1.0) -> None:

@@ -73,3 +73,19 @@ htmlcov/
 # OS files
 .DS_Store
 Thumbs.db
+
+# PRISM-TopoMap comparison — upstream code is fetched at a pinned commit by
+# vendor/fetch_upstream.sh (upstream carries no license, so it is not
+# redistributed); COLD-derived data bundles and third-party weights are
+# regenerated/downloaded as described in prism_comparison/README.md.
+prism_comparison/vendor/prism-topomap/
+prism_comparison/data/
+prism_comparison/weights/
+prism_comparison/results/
+prism_comparison/results_zrep/
+prism_comparison/tools/sanity_check.png
+
+# Encoder training artifacts
+encoder/loss_history/
+encoder/images/
+encoder/images/*.png

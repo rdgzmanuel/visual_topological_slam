@@ -22,12 +22,21 @@ Design (deliberately simplified to a single, reliable run):
   the map's own spatial scale removes that failure mode.
 - Continuous loop closures are debounced: the same candidate must pass the
   gates on ``_LOOP_DEBOUNCE`` consecutive frames before the closure commits.
+- Anchored odometry: odometry is a guideline for inter-node distance and
+  traversability, not a globally consistent position estimate — so it is not
+  allowed to accumulate forever. Whenever a revisit is confirmed, the
+  recognized node is taken as a trusted place: the robot's position estimate
+  snaps to the node's stored pose (translation only; a place can be
+  re-entered from any direction, so the stored heading carries no correction
+  information) and the odometry covariance baseline restarts from zero. Both
+  drift and uncertainty are thereby bounded by the loop structure of the
+  environment instead of growing with total path length.
 
-There is no metric pose-graph optimization here: node poses stay in the
-(drifting) odometry frame, and topological correction happens through node
-fusion. A global SE(2)/pose-graph solver and multi-map fusion were removed to
-keep a single run robust and dependency-light; reinstate them only once the
-single-run map is trustworthy.
+There is no metric pose-graph optimization here: node poses live in the
+anchored-odometry frame, and topological correction happens through node
+fusion and re-anchoring. A global SE(2)/pose-graph solver and multi-map
+fusion were removed to keep a single run robust and dependency-light;
+reinstate them only once the single-run map is trustworthy.
 """
 
 from __future__ import annotations
@@ -153,6 +162,15 @@ class TopologicalMapper:
         self._path_length: float = 0.0
         self._previous_pose: Pose2D | None = None
 
+        # Anchored odometry state. ``_odom_offset`` is the cumulative
+        # translation that maps raw odometry into the map frame (updated at
+        # every confirmed revisit); ``_cov_offset`` is the raw covariance at
+        # the last anchor, so the effective covariance restarts from ~zero
+        # there instead of accumulating over the whole run.
+        self._odom_offset: np.ndarray = np.zeros(2, dtype=np.float64)
+        self._cov_offset: np.ndarray = np.zeros((3, 3), dtype=np.float64)
+        self._latest_raw_covariance: np.ndarray | None = None
+
         # Performance instrumentation (PRISM Table V analogue). Wall-clock time
         # of the per-frame map update (excludes descriptor extraction, which is
         # the encoder's cost and lives in the caller) and of the loop-closure
@@ -207,10 +225,18 @@ class TopologicalMapper:
         covariance: np.ndarray,
         gt_pose: Pose2D | None = None,
     ) -> int | None:
+        # Anchored odometry: shift the raw pose into the map frame and restart
+        # the covariance from the last anchor (confirmed revisit).
+        self._latest_raw_covariance = covariance.astype(np.float64)
+        pose = (
+            pose[0] + float(self._odom_offset[0]),
+            pose[1] + float(self._odom_offset[1]),
+            pose[2],
+        )
         record: FrameRecord = FrameRecord(
             descriptor=descriptor.astype(np.float32),
             pose=pose,
-            covariance=covariance.astype(np.float64),
+            covariance=self._effective_covariance(self._latest_raw_covariance),
             image=image_bgr,
             gt_pose=gt_pose,
         )
@@ -239,11 +265,12 @@ class TopologicalMapper:
     def finalize(self) -> tuple[float, float]:
         """End-of-run hook. Optionally optimize the pose graph.
 
-        With no odometry drift there is nothing to optimize, and running the
-        solver only injects error (its loop-closure edge measurements are not
-        yet consistent with the node poses). The optimizer is therefore OFF by
-        default; node poses stay at their (drift-free, ground-truth-accurate)
-        positions. Enable it via ``optimize=True`` only once drift is present
+        With anchored odometry (position updates + covariance restarts at
+        every confirmed revisit) residual drift is already bounded, and
+        running the solver only injects error (its loop-closure edge
+        measurements are not yet consistent with the node poses). The
+        optimizer is therefore OFF by default; node poses stay at their
+        anchored-odometry positions. Enable it via ``optimize=True`` only once drift is present
         and the edge-measurement consistency has been verified.
 
         Returns:
@@ -274,6 +301,51 @@ class TopologicalMapper:
             ),
             "total_map_time_s": self._update_time_s,
         }
+
+    # ------------------------------------------------------------------ #
+    # Anchored odometry
+    # ------------------------------------------------------------------ #
+    def _effective_covariance(self, raw: np.ndarray) -> np.ndarray:
+        """Covariance accumulated since the last anchor (PSD-clipped)."""
+        effective: np.ndarray = raw - self._cov_offset
+        effective = 0.5 * (effective + effective.T)
+        values, vectors = np.linalg.eigh(effective)
+        return vectors @ np.diag(np.clip(values, 0.0, None)) @ vectors.T
+
+    def _anchor_at(self, node_pose: Pose2D, estimate: Pose2D) -> None:
+        """Re-anchor odometry on a recognized node.
+
+        A confirmed revisit makes the node's stored pose the best available
+        estimate of where the robot is, so the translational error
+        accumulated since the last anchor — the gap between the odometric
+        estimate and the stored node pose — is corrected, and the covariance
+        baseline restarts. Heading is left untouched: a place can be
+        re-entered from any direction, so the stored theta carries no
+        correction information. Buffered frames are shifted too, so a node
+        created just after the anchor gets a consistent pose.
+        """
+        delta: np.ndarray = np.array(node_pose[:2], dtype=np.float64) - np.array(
+            estimate[:2], dtype=np.float64
+        )
+        self._odom_offset += delta
+        shifted: set[int] = set()
+        for frame in list(self._frames) + self._frames_in_node:
+            if id(frame) in shifted:
+                continue
+            shifted.add(id(frame))
+            frame.pose = (
+                frame.pose[0] + float(delta[0]),
+                frame.pose[1] + float(delta[1]),
+                frame.pose[2],
+            )
+        if self._previous_pose is not None:
+            self._previous_pose = (
+                self._previous_pose[0] + float(delta[0]),
+                self._previous_pose[1] + float(delta[1]),
+                self._previous_pose[2],
+            )
+        if self._latest_raw_covariance is not None:
+            self._cov_offset = self._latest_raw_covariance.copy()
 
     # ------------------------------------------------------------------ #
     # Edge bookkeeping
@@ -363,7 +435,14 @@ class TopologicalMapper:
         if revisited_id is not None:
             self._merge_into(candidate, revisited_id)
             self.current_node_id = revisited_id
-            self._record_visit(revisited_id, candidate.pose)
+            # The revisited node is a trusted place: snap the position
+            # estimate onto it and restart odometry accumulation there.
+            matched_pose: Pose2D = self.graph.nodes[revisited_id].pose
+            self._anchor_at(matched_pose, candidate.pose)
+            self._record_visit(
+                revisited_id,
+                (matched_pose[0], matched_pose[1], candidate.pose[2]),
+            )
             return revisited_id
 
         self.graph.add_node(candidate)
@@ -522,7 +601,13 @@ class TopologicalMapper:
                 self.current_node_id, matched_id, record.pose
             )
         self.current_node_id = matched_id
-        self._record_visit(matched_id, record.pose)
+        # Same anchoring as the node-creation revisit path: the recognized
+        # node is a trusted place, so position is updated and odometry
+        # accumulation restarts.
+        self._anchor_at(matched.pose, record.pose)
+        self._record_visit(
+            matched_id, (matched.pose[0], matched.pose[1], record.pose[2])
+        )
 
     def _reset_loop_candidate(self) -> None:
         self._loop_candidate_id = None

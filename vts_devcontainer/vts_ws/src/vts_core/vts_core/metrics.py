@@ -154,9 +154,9 @@ def graph_metrics(
 
     # Placement: internal map distortion. With node_gt available, compare the
     # graph's own (odometry-frame, post-optimization) node layout against the
-    # GT layout after a best-fit SE(2) alignment. NOTE: comparing node_gt
-    # positions to the trajectory they were sampled from is circular (a
-    # previous version of this metric did exactly that and always returned 0).
+    # GT layout after a best-fit SE(2) alignment. Comparing node_gt positions
+    # to the trajectory they were sampled from would be circular and always
+    # return 0, so the map-frame layout must be the source of the fit.
     placement: float = float("nan")
     if node_gt_xy is not None and len(graph.nodes) >= 3:
         ids_for_fit: list[int] = sorted(graph.nodes)
@@ -178,9 +178,9 @@ def graph_metrics(
 
     # False merges: perceptual-aliasing edges, defined as edges where the
     # ground truth distance between the endpoints far exceeds the distance
-    # the map itself believes (its own pose difference). Comparing GT
-    # distance against a global density statistic (a previous version)
-    # wrongly flagged legitimately long corridor edges.
+    # the map itself believes (its own pose difference). The reference must
+    # be the map's own belief, not a global density statistic, which would
+    # wrongly flag legitimately long corridor edges.
     ids_sorted: list[int] = sorted(graph.nodes)
     index_of: dict[int, int] = {nid: k for k, nid in enumerate(ids_sorted)}
     map_positions: np.ndarray = graph.positions()

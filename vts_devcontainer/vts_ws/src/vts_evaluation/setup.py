@@ -23,6 +23,7 @@ setup(
             "plot_odometry = vts_evaluation.plot_odometry:main",
             "compare_odometry_maps = vts_evaluation.compare_odometry_maps:main",
             "place_recognition_eval = vts_evaluation.place_recognition_eval:main",
+            "plot_lambda2 = vts_evaluation.plot_lambda2:main",
         ],
     },
 )

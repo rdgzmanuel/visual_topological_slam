@@ -1,15 +1,20 @@
 """Topological-map visualization for the offline evaluator.
 
-Renders the generated map to a PNG so map quality is inspectable at a glance:
+Renders the generated map to a PNG (plus a ``.pgf`` twin for LaTeX) so map
+quality is inspectable at a glance:
 
-- Nodes are coloured by room label and annotated with their id.
-- Edges are drawn between nodes; an edge that is *short in the map but long in
-  ground truth* (a perceptual-aliasing false closure, the same rule as
-  ``false_merge_rate``) is highlighted in red.
-- When per-node ground truth is available the map is rigidly aligned to the GT
-  frame (the same best-fit SE(2) used for placement RMSE), the GT trajectory
-  is drawn underneath, and a thin red stem connects each node to its true
-  position — so accumulated drift is visible directly.
+- Nodes are coloured by room class (abbreviated class labels in the legend;
+  the report gives the abbreviation-to-full-name key). When
+  per-node ground truth is available each node is *painted* at the
+  ground-truth coordinates of the frame that created it. Ground truth is a
+  paint-time input only: the mapper decides where and when to place nodes
+  from odometry alone and never reads GT.
+- Edges are drawn between nodes in a single uniform colour.
+- The GT trajectory is drawn underneath for spatial context.
+
+Every figure is additionally exported as ``.pgf`` (when the local TeX
+toolchain allows) so it can be ``\\input`` directly in LaTeX/Overleaf, where
+fonts and text sizes follow the document instead of being baked into a PNG.
 
 matplotlib is imported lazily and the renderer degrades gracefully (returns
 False with a warning) if it is unavailable, so it never breaks the metrics run.
@@ -22,8 +27,43 @@ import os
 
 import numpy as np
 
-from vts_core.matching import _fit_se2, median_spacing
 from vts_core.topo_graph import TopoGraph
+
+# Legend text sizes for the raster (PNG) preview. These only affect the PNG;
+# the LaTeX-editable .pgf/.svg twin re-typesets all text in the document's font,
+# so final publication sizing is controlled from Overleaf, not here.
+_LEGEND_FONTSIZE: int = 16
+_LEGEND_TITLE_FONTSIZE: int = 18
+_LEGEND_MARKERSIZE: int = 11
+
+
+def _save_latex_figure(fig, out_path: str) -> str | None:
+    """Save a LaTeX-editable twin of the figure next to ``out_path``.
+
+    Preferred format is ``.pgf`` (LaTeX source: ``\\input`` it in Overleaf and
+    all text is typeset in the document's font, so size and placement stay
+    editable after export), but writing PGF needs a local TeX toolchain for
+    text metrics. Without one, fall back to ``.svg``: with Overleaf's ``svg``
+    package (``\\usepackage{svg}`` + ``\\includesvg{...}``) the text layer is
+    likewise re-typeset by LaTeX in the document's font.
+    """
+    pgf_path: str = os.path.splitext(out_path)[0] + ".pgf"
+    try:
+        fig.savefig(pgf_path, bbox_inches="tight")
+        print(f"[viz] LaTeX (PGF) version saved to {pgf_path}")
+        return pgf_path
+    except Exception:  # no local TeX; SVG keeps the text editable in Overleaf
+        svg_path: str = os.path.splitext(out_path)[0] + ".svg"
+        try:
+            fig.savefig(svg_path, bbox_inches="tight")
+        except Exception as error:  # pragma: no cover - environment dependent
+            print(f"[viz] LaTeX-editable export skipped ({error})")
+            return None
+        print(
+            f"[viz] LaTeX-editable (SVG) version saved to {svg_path} "
+            "(use \\usepackage{svg} + \\includesvg in Overleaf)"
+        )
+        return svg_path
 
 
 def render_map(
@@ -33,7 +73,13 @@ def render_map(
     node_gt: dict[int, np.ndarray] | None = None,
     title: str | None = None,
 ) -> bool:
-    """Render the map to ``out_path`` (PNG). Returns True on success."""
+    """Render the map to ``out_path`` (PNG + PGF). Returns True on success.
+
+    When ``node_gt`` covers every node, nodes are painted at their
+    ground-truth coordinates (paint-time only — the mapper placed them from
+    odometry); otherwise the mapper's own (anchored-odometry) positions are
+    drawn.
+    """
     try:
         import matplotlib
 
@@ -50,51 +96,25 @@ def render_map(
     index: dict[int, int] = {nid: k for k, nid in enumerate(ids)}
     map_pos: np.ndarray = graph.positions()
 
-    # Align the map to the GT frame when per-node GT is available.
     gt_pos: np.ndarray | None = None
-    aligned: np.ndarray = map_pos
-    if node_gt is not None and all(i in node_gt for i in ids) and len(ids) >= 2:
+    if node_gt is not None and all(i in node_gt for i in ids):
         gt_pos = np.array([node_gt[i] for i in ids], dtype=np.float64)
-        fit = _fit_se2(map_pos, gt_pos)
-        if fit is not None:
-            rotation, translation = fit
-            aligned = map_pos @ rotation.T + translation
-
-    tolerance: float = median_spacing(gt_pos if gt_pos is not None else map_pos)
+    drawn: np.ndarray = gt_pos if gt_pos is not None else map_pos
 
     fig, ax = plt.subplots(figsize=(11, 8))
 
     if gt_xy is not None and gt_xy.size:
         ax.plot(
             gt_xy[:, 0], gt_xy[:, 1], color="0.82", lw=1.0, zorder=1,
-            label="GT trajectory",
-        )
-    if gt_pos is not None:
-        for k in range(len(ids)):
-            ax.plot(
-                [aligned[k, 0], gt_pos[k, 0]], [aligned[k, 1], gt_pos[k, 1]],
-                color="0.55", lw=0.7, alpha=0.6, linestyle=":", zorder=2,
-            )
-        ax.scatter(
-            gt_pos[:, 0], gt_pos[:, 1], marker="x", c="0.4", s=22, lw=0.8,
-            zorder=3, label="GT node position (stem = drift)",
+            label="Ground-truth trajectory",
         )
 
-    n_false: int = 0
     for id_a, id_b in graph.edges():
         ka, kb = index[id_a], index[id_b]
-        suspicious: bool = False
-        if gt_pos is not None:
-            gt_dist: float = float(np.linalg.norm(gt_pos[ka] - gt_pos[kb]))
-            map_dist: float = float(np.linalg.norm(map_pos[ka] - map_pos[kb]))
-            suspicious = gt_dist > map_dist + 3.0 * tolerance
-        n_false += int(suspicious)
         ax.plot(
-            [aligned[ka, 0], aligned[kb, 0]],
-            [aligned[ka, 1], aligned[kb, 1]],
-            color="crimson" if suspicious else "steelblue",
-            lw=2.2 if suspicious else 1.2,
-            alpha=0.9, zorder=4,
+            [drawn[ka, 0], drawn[kb, 0]],
+            [drawn[ka, 1], drawn[kb, 1]],
+            color="steelblue", lw=1.2, alpha=0.9, zorder=4,
         )
 
     labels: list[str] = [graph.nodes[i].room_label or "?" for i in ids]
@@ -104,31 +124,23 @@ def render_map(
         label: cmap(k % cmap.N) for k, label in enumerate(unique)
     }
     ax.scatter(
-        aligned[:, 0], aligned[:, 1],
+        drawn[:, 0], drawn[:, 1],
         c=[color_of[label] for label in labels],
         s=90, edgecolors="black", linewidths=0.5, zorder=5,
     )
-    for k, nid in enumerate(ids):
-        ax.annotate(
-            str(nid), (aligned[k, 0], aligned[k, 1]),
-            fontsize=6, ha="center", va="center", zorder=6,
-        )
 
     room_handles = [
         plt.Line2D([0], [0], marker="o", linestyle="", markerfacecolor=color_of[label],
-                   markeredgecolor="black", markersize=8, label=label)
+                   markeredgecolor="black", markersize=_LEGEND_MARKERSIZE, label=label)
         for label in unique
     ]
     edge_handles = [
-        plt.Line2D([0], [0], color="steelblue", lw=2, label="edge"),
+        plt.Line2D([0], [0], color="steelblue", lw=2, label="Edge"),
     ]
-    if n_false:
-        edge_handles.append(
-            plt.Line2D([0], [0], color="crimson", lw=2, label="false-merge edge")
-        )
     ax.legend(
-        handles=room_handles + edge_handles, loc="best", fontsize=7,
-        title="room", framealpha=0.9, ncol=1,
+        handles=room_handles + edge_handles, loc="best",
+        fontsize=_LEGEND_FONTSIZE, title="Room",
+        title_fontsize=_LEGEND_TITLE_FONTSIZE, framealpha=0.9, ncol=1,
     )
 
     ax.set_aspect("equal", adjustable="datalim")
@@ -138,6 +150,7 @@ def render_map(
     ax.set_title(title or "Topological map")
     fig.tight_layout()
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    _save_latex_figure(fig, out_path)
     plt.close(fig)
     print(f"[viz] map image saved to {out_path}")
     return True
@@ -241,11 +254,12 @@ def render_on_floorplan(
     gt_xy: np.ndarray | None = None,
     title: str | None = None,
 ) -> bool:
-    """Overlay the map (aligned to ground truth) on a metric floorplan image.
+    """Overlay the map on a metric floorplan image.
 
-    Requires per-node ground truth (to align the odometry-frame map into the
-    floorplan's world frame) and a ``<floorplan>.calib.json`` sidecar giving
-    the world-metres -> pixel affine. Degrades gracefully (returns False) if
+    Nodes are painted at their ground-truth coordinates (paint-time only —
+    the mapper placed them from odometry), so per-node ground truth is
+    required, along with a ``<floorplan>.calib.json`` sidecar giving the
+    world-metres -> pixel affine. Degrades gracefully (returns False) if
     matplotlib, the floorplan, the calibration, or the GT are unavailable.
     """
     try:
@@ -277,11 +291,9 @@ def render_on_floorplan(
         print(f"[viz] bad floorplan calibration: {error}")
         return False
 
-    # Align the odometry-frame map into the world (floorplan) frame.
-    map_pos: np.ndarray = graph.positions()
+    # Nodes are painted at their ground-truth coordinates, which live
+    # directly in the floorplan's world frame (no alignment needed).
     gt_pos: np.ndarray = np.array([node_gt[i] for i in ids], dtype=np.float64)
-    fit = _fit_se2(map_pos, gt_pos)
-    aligned: np.ndarray = map_pos @ fit[0].T + fit[1] if fit else map_pos
 
     floor = np.array(Image.open(floorplan_path).convert("RGB"))
     height, width = floor.shape[:2]
@@ -290,20 +302,18 @@ def render_on_floorplan(
 
     if gt_xy is not None and gt_xy.size:
         gx, gy = transform(gt_xy[:, 0], gt_xy[:, 1])
-        ax.plot(gx, gy, color="tab:green", lw=1.2, alpha=0.7, label="GT path")
+        ax.plot(
+            gx, gy, color="tab:green", lw=1.2, alpha=0.7,
+            label="Ground-truth trajectory",
+        )
 
-    cols, rows = transform(aligned[:, 0], aligned[:, 1])
+    cols, rows = transform(gt_pos[:, 0], gt_pos[:, 1])
     index: dict[int, int] = {nid: k for k, nid in enumerate(ids)}
-    tolerance: float = median_spacing(gt_pos)
     for id_a, id_b in graph.edges():
         ka, kb = index[id_a], index[id_b]
-        suspicious: bool = float(
-            np.linalg.norm(gt_pos[ka] - gt_pos[kb])
-        ) > float(np.linalg.norm(map_pos[ka] - map_pos[kb])) + 3.0 * tolerance
         ax.plot(
             [cols[ka], cols[kb]], [rows[ka], rows[kb]],
-            color="crimson" if suspicious else "steelblue",
-            lw=2.0 if suspicious else 1.3, zorder=4,
+            color="steelblue", lw=1.3, zorder=4,
         )
 
     labels: list[str] = [graph.nodes[i].room_label or "?" for i in ids]
@@ -314,23 +324,22 @@ def render_on_floorplan(
         cols, rows, c=[color_of[label] for label in labels],
         s=85, edgecolors="black", linewidths=0.5, zorder=5,
     )
-    for k, nid in enumerate(ids):
-        ax.annotate(
-            str(nid), (cols[k], rows[k]), fontsize=6,
-            ha="center", va="center", zorder=6,
-        )
 
     handles = [
         plt.Line2D([0], [0], marker="o", linestyle="", markerfacecolor=color_of[label],
-                   markeredgecolor="black", markersize=8, label=label)
+                   markeredgecolor="black", markersize=_LEGEND_MARKERSIZE, label=label)
         for label in unique
     ]
     ax.set_xlim(0, width)
     ax.set_ylim(height, 0)
     ax.axis("off")
-    ax.legend(handles=handles, loc="lower left", fontsize=7, title="room")
+    ax.legend(
+        handles=handles, loc="lower left", fontsize=_LEGEND_FONTSIZE,
+        title="Room", title_fontsize=_LEGEND_TITLE_FONTSIZE,
+    )
     ax.set_title(title or "Map on floorplan")
     fig.savefig(out_path, dpi=140, bbox_inches="tight")
+    _save_latex_figure(fig, out_path)
     plt.close(fig)
     print(f"[viz] floorplan overlay saved to {out_path}")
     return True
