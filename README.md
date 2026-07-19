@@ -1,4 +1,4 @@
-# Visual Topological SLAM using Deep Learning Techniques
+# LANTERN — LANguage Topological Environment Representation and Navigation
 
 <table align="center">
   <tr>
@@ -11,7 +11,7 @@
   </tr>
 </table>
 
-A single-run pipeline that builds a topological map of an indoor environment from a **monocular camera stream and odometry**, and exposes it to **natural-language navigation queries**. Images are encoded with a fine-tuned vision transformer; nodes are created by monitoring the algebraic connectivity of a sliding-window similarity graph; revisits are fused only when a robust visual outlier test and a covariance-aware geometric gate agree, which keeps the graph connected and free of false merges. A CLIP-based module grounds open-vocabulary free-text queries to the most relevant node.
+LANTERN is a single-run pipeline that builds a topological map of an indoor environment from a **monocular camera stream and odometry**, and exposes it to **natural-language navigation queries** — a topological map you can talk to. Images are encoded with a fine-tuned vision transformer; nodes are created by monitoring the algebraic connectivity of a sliding-window similarity graph; revisits are fused only when a robust visual outlier test and a covariance-aware geometric gate agree, which keeps the graph connected and free of false merges. A CLIP-based module grounds open-vocabulary free-text queries to the most relevant node.
 
 On four COLD environments the system produces single-component graphs with false merges almost entirely suppressed, and its place descriptor reaches 95.0 AR@1 across strong illumination changes. It is compared against the state-of-the-art topological mapper [PRISM-TopoMap](https://arxiv.org/abs/2404.01674) at two levels: against its published metric classes, and head-to-head by running its public implementation on the same COLD sequences with identical odometry (see [`prism_comparison/`](prism_comparison/)).
 
