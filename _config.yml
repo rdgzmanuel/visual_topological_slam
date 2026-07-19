@@ -1,0 +1,17 @@
+# GitHub Pages configuration (Deploy from a branch: main, / root).
+# Jekyll renders README.md as the site index via jekyll-readme-index.
+title: LANTERN
+description: >-
+  LANguage Topological Environment Representation and Navigation — a
+  topological map you can talk to. Monocular visual topological SLAM with
+  open-vocabulary natural-language navigation queries.
+theme: jekyll-theme-primer
+
+# Only the README and its images belong on the site; keep source code,
+# containers and experiment rigs out of the generated pages.
+exclude:
+  - encoder/
+  - vts_devcontainer/
+  - prism_comparison/
+  - Dockerfile
+  - requirements.txt

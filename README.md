@@ -2,18 +2,18 @@
 
 <table align="center">
   <tr>
-    <td align="center"><img src="docs/cover_images/map_freiburg_a.png" alt="Freiburg A" width="340"/><br/><em>Freiburg A</em></td>
-    <td align="center"><img src="docs/cover_images/map_saarbruecken_a.png" alt="Saarbrücken A" width="340"/><br/><em>Saarbrücken A</em></td>
+    <td align="center"><img src="assets/cover_images/map_freiburg_a.png" alt="Freiburg A" width="340"/><br/><em>Freiburg A</em></td>
+    <td align="center"><img src="assets/cover_images/map_saarbruecken_a.png" alt="Saarbrücken A" width="340"/><br/><em>Saarbrücken A</em></td>
   </tr>
   <tr>
-    <td align="center"><img src="docs/cover_images/map_freiburg_ext.png" alt="Freiburg Extended" width="340"/><br/><em>Freiburg Extended</em></td>
-    <td align="center"><img src="docs/cover_images/map_saarbruecken_ext.png" alt="Saarbrücken Extended" width="340"/><br/><em>Saarbrücken Extended</em></td>
+    <td align="center"><img src="assets/cover_images/map_freiburg_ext.png" alt="Freiburg Extended" width="340"/><br/><em>Freiburg Extended</em></td>
+    <td align="center"><img src="assets/cover_images/map_saarbruecken_ext.png" alt="Saarbrücken Extended" width="340"/><br/><em>Saarbrücken Extended</em></td>
   </tr>
 </table>
 
 LANTERN is a single-run pipeline that builds a topological map of an indoor environment from a **monocular camera stream and odometry**, and exposes it to **natural-language navigation queries** — a topological map you can talk to. Images are encoded with a fine-tuned vision transformer; nodes are created by monitoring the algebraic connectivity of a sliding-window similarity graph; revisits are fused only when a robust visual outlier test and a covariance-aware geometric gate agree, which keeps the graph connected and free of false merges. A CLIP-based module grounds open-vocabulary free-text queries to the most relevant node.
 
-On four COLD environments the system produces single-component graphs with false merges almost entirely suppressed, and its place descriptor reaches 95.0 AR@1 across strong illumination changes. It is compared against the state-of-the-art topological mapper [PRISM-TopoMap](https://arxiv.org/abs/2404.01674) at two levels: against its published metric classes, and head-to-head by running its public implementation on the same COLD sequences with identical odometry (see [`prism_comparison/`](prism_comparison/)).
+On four COLD environments the system produces single-component graphs with false merges almost entirely suppressed, and its place descriptor reaches 95.0 AR@1 across strong illumination changes. It is compared against the state-of-the-art topological mapper [PRISM-TopoMap](https://arxiv.org/abs/2404.01674) at two levels: against its published metric classes, and head-to-head by running its public implementation on the same COLD sequences with identical odometry (see [`prism_comparison/`](https://github.com/manuel-rodriguezvillegas/visual_topological_slam/tree/main/prism_comparison)).
 
 **Authors:** Manuel Rodríguez Villegas, Jaime Boal Martín-Larrauri, Jesús Tordesillas Torres
 
@@ -71,7 +71,7 @@ Structural quality of the single-run maps. Odometry is synthesized from ground t
 
 Place-recognition Average Recall (%, 5 m threshold, mean over the four environments): **81.0 AR@1 / 91.7 AR@5** within-run, **95.0 AR@1 / 98.6 AR@5** across illumination conditions (database and queries from different sessions of the same route). Graph maintenance runs at **0.32 ms/frame** (excluding the encoder forward pass) and the descriptors-only map occupies **~13 kB**.
 
-In the head-to-head comparison ([`prism_comparison/`](prism_comparison/)), PRISM-TopoMap run on the same sequences with identical odometry also produces connected maps with comparable metric distortion, but its LiDAR-native place recognition (MinkLoc3D trained on 3D LiDAR) drops to a mean 41.0 AR@1 on COLD's planar range data — against 81.0 for this system's monocular descriptor — with false-merge rates up to 0.23. Vertically extruding the 2D scans to mimic 3D structure does not close the gap.
+In the head-to-head comparison ([`prism_comparison/`](https://github.com/manuel-rodriguezvillegas/visual_topological_slam/tree/main/prism_comparison)), PRISM-TopoMap run on the same sequences with identical odometry also produces connected maps with comparable metric distortion, but its LiDAR-native place recognition (MinkLoc3D trained on 3D LiDAR) drops to a mean 41.0 AR@1 on COLD's planar range data — against 81.0 for this system's monocular descriptor — with false-merge rates up to 0.23. Vertically extruding the 2D scans to mimic 3D structure does not close the gap.
 
 ## Repository Structure
 
@@ -98,7 +98,7 @@ visual_topological_slam/
 │   ├── eval/                   # Same-metrics evaluation + floorplan overlays
 │   ├── tools/                  # COLD → input-bundle converter
 │   └── vendor/                 # Pinned-commit fetch script + device patch
-├── docs/                       # Cover images
+├── assets/                     # Cover images
 ├── Dockerfile
 └── requirements.txt
 ```
