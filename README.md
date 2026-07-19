@@ -78,10 +78,12 @@ In the head-to-head comparison ([`prism_comparison/`](https://github.com/manuel-
 ```
 visual_topological_slam/
 ├── encoder/                    # Encoder training and evaluation (PyTorch)
-│   └── src/
-│       ├── config.py           # Hyperparameters and loss selection
-│       ├── train.py            # python -m src.train
-│       └── evaluate.py         # python -m src.evaluate
+│   ├── src/
+│   │   ├── config.py           # Hyperparameters and loss selection
+│   │   ├── train.py            # python -m src.train
+│   │   └── evaluate.py         # python -m src.evaluate
+│   ├── requirements.txt        # Training dependencies
+│   └── Dockerfile              # CUDA training container
 ├── vts_devcontainer/           # VS Code devcontainer (ROS 2 Humble)
 │   └── vts_ws/                 # ROS 2 workspace
 │       ├── src/
@@ -98,9 +100,7 @@ visual_topological_slam/
 │   ├── eval/                   # Same-metrics evaluation + floorplan overlays
 │   ├── tools/                  # COLD → input-bundle converter
 │   └── vendor/                 # Pinned-commit fetch script + device patch
-├── assets/                     # Cover images
-├── Dockerfile
-└── requirements.txt
+└── assets/                     # Cover images
 ```
 
 ## Reproducing the Experiments
@@ -133,7 +133,7 @@ Frame filenames carry the ground-truth pose; `places.lst` provides the room labe
 
 ### 3. Encoder Training
 
-Set the loss function (`triplet` or `contrastive`) and hyperparameters in `encoder/src/config.py`, then from `encoder/`:
+Install the training dependencies (`pip install -r encoder/requirements.txt`) or build the CUDA container (`docker build -t lantern-encoder encoder/`). Set the loss function (`triplet` or `contrastive`) and hyperparameters in `encoder/src/config.py`, then from `encoder/`:
 
 ```bash
 python -m src.train      # writes weights to encoder/models/

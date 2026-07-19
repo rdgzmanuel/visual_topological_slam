@@ -13,5 +13,3 @@ exclude:
   - encoder/
   - vts_devcontainer/
   - prism_comparison/
-  - Dockerfile
-  - requirements.txt
