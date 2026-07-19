@@ -89,3 +89,5 @@ prism_comparison/tools/sanity_check.png
 encoder/loss_history/
 encoder/images/
 encoder/images/*.png
+
+thesis/
