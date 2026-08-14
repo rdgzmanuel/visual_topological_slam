@@ -26,6 +26,7 @@ from contextlib import suppress
 
 import numpy as np
 import rclpy
+from rclpy.executors import ExternalShutdownException
 from cv_bridge import CvBridge
 from geometry_msgs.msg import PoseStamped
 from message_filters import ApproximateTimeSynchronizer, Subscriber
@@ -51,15 +52,21 @@ class GraphBuilderNode(Node):
         super().__init__("graph_builder")
 
         self.declare_parameter("window_size", 30)
-        self.declare_parameter("valley_k", 1.5)
+        self.declare_parameter("valley_k", 2.0)
         self.declare_parameter("merge_radius", 2.0)
         self.declare_parameter("visual_outlier_k", 2.0)
-        self.declare_parameter("optimize", False)
+        self.declare_parameter("optimize", True)
+        self.declare_parameter("gate_mode", "both")
+        self.declare_parameter("naive_threshold", 0.7)
         self.declare_parameter("extractor", "dinov2")
         self.declare_parameter("model_name", "")
         self.declare_parameter("encoder_path", "")
         self.declare_parameter("output_dir", "output/graphs")
         self.declare_parameter("run_name", "run")
+        # Exit the process once the last sequence is done (lets scripted runs
+        # like run_experiments.sh proceed without a manual Ctrl-C; the launch
+        # file shuts the whole pipeline down when this node exits).
+        self.declare_parameter("exit_when_done", True)
 
         self._window_size: int = (
             self.get_parameter("window_size").get_parameter_value().integer_value
@@ -72,6 +79,15 @@ class GraphBuilderNode(Node):
         )
         self._visual_outlier_k: float = (
             self.get_parameter("visual_outlier_k").get_parameter_value().double_value
+        )
+        self._optimize: bool = (
+            self.get_parameter("optimize").get_parameter_value().bool_value
+        )
+        self._gate_mode: str = (
+            self.get_parameter("gate_mode").get_parameter_value().string_value
+        )
+        self._naive_threshold: float = (
+            self.get_parameter("naive_threshold").get_parameter_value().double_value
         )
         extractor_spec: str = (
             self.get_parameter("extractor").get_parameter_value().string_value
@@ -88,6 +104,10 @@ class GraphBuilderNode(Node):
         self._run_name: str = (
             self.get_parameter("run_name").get_parameter_value().string_value
         )
+        self._exit_when_done: bool = (
+            self.get_parameter("exit_when_done").get_parameter_value().bool_value
+        )
+        self._shutdown_timer = None
         os.makedirs(self._output_dir, exist_ok=True)
 
         self._extractor: FeatureExtractor = build_extractor(
@@ -127,6 +147,9 @@ class GraphBuilderNode(Node):
             valley_k=self._valley_k,
             merge_radius=self._merge_radius,
             visual_outlier_k=self._visual_outlier_k,
+            optimize=self._optimize,
+            gate_mode=self._gate_mode,
+            naive_threshold=self._naive_threshold,
             frame_id=f"{self._run_name}_seq{self._sequence_index}",
         )
 
@@ -190,6 +213,13 @@ class GraphBuilderNode(Node):
 
     # ------------------------------------------------------------------ #
     def _on_sequence_done(self, msg: String) -> None:
+        # Snapshot the map BEFORE optimization so the anchored-odometry node
+        # placement can be evaluated against the optimized one (RMSE
+        # before/after in the paper).
+        noopt_path: str = os.path.join(
+            self._output_dir, f"graph_{self._sequence_index}_noopt.pkl"
+        )
+        self._mapper.graph.save(noopt_path)
         initial_error, final_error = self._mapper.finalize()
         self.get_logger().info(
             f"Pose-graph optimization (numpy SE2): error "
@@ -259,13 +289,24 @@ class GraphBuilderNode(Node):
         self._mapper = self._new_mapper()
         self._node_gt = {}
 
+        if event["all_done"] and self._exit_when_done:
+            # Grace period so DDS delivers the graph_ready message, then end
+            # the spin. The launch file reacts to this process exiting by
+            # shutting down the whole pipeline (player included).
+            self.get_logger().info("All sequences done; exiting in 2 s.")
+            self._shutdown_timer = self.create_timer(2.0, self._request_shutdown)
+
+    def _request_shutdown(self) -> None:
+        rclpy.try_shutdown()
+
 
 def main(args: list[str] | None = None) -> None:
     rclpy.init(args=args)
     node: GraphBuilderNode = GraphBuilderNode()
-    with suppress(KeyboardInterrupt):
+    with suppress(KeyboardInterrupt, ExternalShutdownException):
         rclpy.spin(node)
-    node.destroy_node()
+    with suppress(Exception):
+        node.destroy_node()
     rclpy.try_shutdown()
 
 

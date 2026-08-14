@@ -14,10 +14,15 @@ player:
   alpha: [0.025, 0.005, 0.01, 0.0025]   # odometry motion-model noise (alpha1..4)
 
 mapping:
+  # Fixed hyperparameter set shared by ALL environments (no per-environment
+  # tuning): valley_k / visual_outlier_k / merge_radius = 2.0 / 2.0 / 2.0.
   window_size: 30
-  valley_k: 0.75           # node-creation sensitivity (lower = more, finer-grained nodes)
-  merge_radius: 0.5       # radius (m) of the geometric gate; larger = more merges, fewer nodes
-  visual_outlier_k: 0.5      # visual revisit strictness (MAD multiplier); lower = more merges / loop closures
+  valley_k: 2.0              # node-creation sensitivity (lower = more, finer-grained nodes)
+  merge_radius: 2.0          # radius (m) of the geometric gate; larger = more merges, fewer nodes
+  visual_outlier_k: 2.0      # visual revisit strictness (MAD multiplier); lower = more merges / loop closures
+  gate_mode: "both"          # revisit-gate ablation: both|visual|geometric|threshold (CLI: gate_mode:=...)
+  naive_threshold: 0.7       # absolute similarity threshold for the "threshold" ablation baseline
+  optimize: true             # end-of-run SE(2) pose-graph optimization (pre-opt graph also saved)
   extractor: "finetuned:src"  # fine-tuned DINO encoder; "dinov2" for the stock backbone
   model_name: "visual_encoder_dino_contrastive_dim128_best"  # .pth name in <encoder_path>/models, or absolute path
   encoder_path: "/workspace/encoder"  # encoder repo root (contains src/ and models/)

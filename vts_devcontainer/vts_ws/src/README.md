@@ -42,6 +42,8 @@ must report a meaningful covariance as well.
 ## Quick start
 
 ```bash
+cd vts_ws
+
 colcon build --symlink-install
 source install/setup.bash
 

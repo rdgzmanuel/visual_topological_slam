@@ -164,11 +164,22 @@ ros2 launch vts_bringup pipeline.launch.py config:=cold_freiburg_a.yaml mode:=bu
 
 This plays the sequence, builds the graph online, and writes to `output/freiburg_a/`:
 
-- `final_graph.pkl` — the topological map,
+- `final_graph.pkl` — the topological map (pose-graph optimized),
+- `graph_0_noopt.pkl` — the same map before the end-of-run SE(2) optimization (for RMSE before/after),
 - `graph_0_node_gt.json` — per-node ground truth (evaluation only),
 - `graph_0_performance.json` — map-update / loop-closure timings and map size.
 
-Repeat with `cold_freiburg_ext.yaml`, `cold_saarbruecken_a.yaml`, `cold_saarbruecken_ext.yaml`. The committed configs use the noisy synthesized odometry of the published results (`alpha: [0.025, 0.005, 0.01, 0.0025]`, `odom_seed: 17`); set `alpha` to zeros for a drift-free replay, or raise it to study stronger drift.
+Repeat with `cold_freiburg_ext.yaml`, `cold_saarbruecken_a.yaml`, `cold_saarbruecken_ext.yaml`. The committed configs use the noisy synthesized odometry of the published results (`alpha: [0.025, 0.005, 0.01, 0.0025]`, `odom_seed: 17`); set `alpha` to zeros for a drift-free replay, or raise it to study stronger drift. All four configs share a single fixed hyperparameter set (`valley_k`/`visual_outlier_k`/`merge_radius` = 2.0/2.0/2.0) — no per-environment tuning.
+
+**Gate ablation.** The revisit criterion can be swapped from the command line without touching the configs:
+
+```bash
+ros2 launch vts_bringup pipeline.launch.py config:=cold_freiburg_a.yaml gate_mode:=visual     # visual gate only
+ros2 launch vts_bringup pipeline.launch.py config:=cold_freiburg_a.yaml gate_mode:=geometric  # geometric gate only
+ros2 launch vts_bringup pipeline.launch.py config:=cold_freiburg_a.yaml gate_mode:=threshold  # naive similarity threshold
+```
+
+Non-default modes write to `output/<env>_<mode>/` so they never overwrite the main results. `optimize:=false` disables the end-of-run pose-graph optimization. `vts_ws/run_experiments.sh` runs the full suite (all environments × gate modes, plus the NLP retrieval evaluation and the before/after-optimization reports).
 
 ### 6. Evaluating a Map
 
@@ -214,6 +225,16 @@ Results (ranked nodes, posteriors, representative views) are written to `output/
 ros2 topic pub --once /language/command std_msgs/String "{data: 'take me to the kitchen'}"
 ```
 
+For the quantitative retrieval evaluation of the paper, generate the query set from the map itself (three fixed phrasings per room class present on the map) and feed it to the evaluator:
+
+```bash
+python3 -m vts_evaluation.make_queries --graph output/freiburg_a/final_graph.pkl --out output/freiburg_a/queries.json
+python3 -m vts_evaluation.evaluate_run --graph output/freiburg_a/final_graph.pkl \
+    --node-gt output/freiburg_a/graph_0_node_gt.json --queries output/freiburg_a/queries.json
+```
+
+This reports Recall@1/@3, MRR, per-class recall, and the coverage/precision curve of the calibrated rejection rule.
+
 ### 9. Floorplan Overlays (optional)
 
 Overlaying maps on the CAD floorplans requires a one-time, per-environment calibration (COLD poses are not metrically aligned with the drawings). Place the floorplan PNGs under `vts_ws/images/maps/` and run the interactive fitter:
@@ -239,6 +260,9 @@ Each `vts_bringup/config/cold_<env>.yaml` exposes the experiment knobs:
 | `valley_k` | mapping | Node-creation sensitivity (lower → more nodes) |
 | `merge_radius` | mapping | Radius (m) within which a visually-confirmed revisit merges |
 | `visual_outlier_k` | mapping | Strictness of the visual revisit gate (lower → easier merges) |
+| `gate_mode` | mapping | Revisit-gate ablation: `both` \| `visual` \| `geometric` \| `threshold` (overridable with `gate_mode:=`) |
+| `naive_threshold` | mapping | Absolute similarity threshold for the `threshold` ablation baseline |
+| `optimize` | mapping | End-of-run SE(2) pose-graph optimization (overridable with `optimize:=`) |
 | `extractor`, `model_name`, `encoder_path` | mapping | Encoder selection |
 | `query_sentence`, `mode`, `top_k` | language | Language-module behaviour |
 

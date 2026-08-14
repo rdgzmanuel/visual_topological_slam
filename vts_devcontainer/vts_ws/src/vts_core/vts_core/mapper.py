@@ -32,11 +32,12 @@ Design (deliberately simplified to a single, reliable run):
   drift and uncertainty are thereby bounded by the loop structure of the
   environment instead of growing with total path length.
 
-There is no metric pose-graph optimization here: node poses live in the
-anchored-odometry frame, and topological correction happens through node
-fusion and re-anchoring. A global SE(2)/pose-graph solver and multi-map
-fusion were removed to keep a single run robust and dependency-light;
-reinstate them only once the single-run map is trustworthy.
+During the run, node poses live in the anchored-odometry frame and
+topological correction happens through node fusion and re-anchoring. At the
+end of the run an SE(2) pose-graph optimization (:mod:`vts_core.pose_graph`,
+enabled by default via ``optimize``) corrects the residual metric drift of
+the node poses from the stored relative edge measurements; multi-map fusion
+remains removed to keep a single run robust and dependency-light.
 """
 
 from __future__ import annotations
@@ -89,6 +90,14 @@ _MIN_NODES_FOR_REVISIT: int = 5
 # and intra-place similarity of the contrastive encoder.
 _MIN_REVISIT_SIMILARITY: float = 0.5
 
+# Revisit gate ablation modes. "both" is the full system (visual outlier test
+# AND geometric gate must agree); "visual" and "geometric" disable one gate
+# each; "threshold" replaces the whole dual gate with a naive absolute
+# cosine-similarity threshold — the baseline the dual gate is argued against.
+GATE_MODES: tuple[str, ...] = ("both", "visual", "geometric", "threshold")
+# Absolute cosine-similarity threshold used by the "threshold" ablation mode.
+_NAIVE_THRESHOLD: float = 0.7
+
 
 @dataclass
 class FrameRecord:
@@ -118,7 +127,9 @@ class TopologicalMapper:
         valley_k: float = 1.5,
         merge_radius: float = 2.0,
         visual_outlier_k: float = _VISUAL_OUTLIER_K,
-        optimize: bool = False,
+        optimize: bool = True,
+        gate_mode: str = "both",
+        naive_threshold: float = _NAIVE_THRESHOLD,
     ) -> None:
         """
         Args:
@@ -137,12 +148,27 @@ class TopologicalMapper:
             visual_outlier_k: Strictness of the visual revisit gate (robust
                 MAD multiplier). LOWER it to merge more aggressively, RAISE for
                 stricter loop closures. See ``_VISUAL_OUTLIER_K``.
+            optimize: Run the end-of-run SE(2) pose-graph optimization in
+                :meth:`finalize` (corrects accumulated odometry drift in the
+                node poses).
+            gate_mode: Revisit-gate ablation mode, one of :data:`GATE_MODES`.
+                "both" (default) is the full dual gate; "visual" /
+                "geometric" keep only one gate; "threshold" is the naive
+                absolute-similarity baseline.
+            naive_threshold: Cosine-similarity threshold used when
+                ``gate_mode == "threshold"``.
         """
+        if gate_mode not in GATE_MODES:
+            raise ValueError(
+                f"gate_mode must be one of {GATE_MODES}, got {gate_mode!r}"
+            )
         self.graph: TopoGraph = TopoGraph(frame_id=frame_id)
         self.current_node_id: int | None = None
         self._merge_radius: float = merge_radius
         self._visual_outlier_k: float = visual_outlier_k
         self._optimize: bool = optimize
+        self._gate_mode: str = gate_mode
+        self._naive_threshold: float = naive_threshold
 
         self._monitor: ConnectivityMonitor = ConnectivityMonitor(window_size)
         self._detector: AdaptiveValleyDetector = AdaptiveValleyDetector(k=valley_k)
@@ -263,15 +289,14 @@ class TopologicalMapper:
         return self._create_or_merge_node()
 
     def finalize(self) -> tuple[float, float]:
-        """End-of-run hook. Optionally optimize the pose graph.
+        """End-of-run hook. Optimize the pose graph (unless ``optimize=False``).
 
-        With anchored odometry (position updates + covariance restarts at
-        every confirmed revisit) residual drift is already bounded, and
-        running the solver only injects error (its loop-closure edge
-        measurements are not yet consistent with the node poses). The
-        optimizer is therefore OFF by default; node poses stay at their
-        anchored-odometry positions. Enable it via ``optimize=True`` only once drift is present
-        and the edge-measurement consistency has been verified.
+        Anchored odometry (position updates + covariance restarts at every
+        confirmed revisit) bounds the drift topologically, but the residual
+        metric error between anchors remains in the node poses. The end-of-run
+        SE(2) solver corrects it globally from the stored relative edge
+        measurements; disable via ``optimize=False`` to keep the raw
+        anchored-odometry poses (e.g. to report the unoptimized RMSE).
 
         Returns:
             (initial_error, final_error); ``(0.0, 0.0)`` when optimization is
@@ -493,12 +518,37 @@ class TopologicalMapper:
             return True
         return mahalanobis_gate(delta_xy, combined_cov)
 
+    def _revisit_gates(
+        self,
+        similarities: np.ndarray,
+        match_index: int,
+        delta_xy: np.ndarray,
+        combined_cov: np.ndarray,
+    ) -> bool:
+        """Full revisit decision on a mutual-NN candidate, honouring the
+        ablation ``gate_mode``: the dual gate ("both"), a single gate
+        ("visual"/"geometric"), or the naive absolute-similarity baseline
+        ("threshold"). Candidate selection (mutual nearest neighbour) is
+        common to every mode; only the acceptance criterion changes.
+        """
+        if self._gate_mode == "threshold":
+            return float(similarities[match_index]) >= self._naive_threshold
+        if self._gate_mode == "visual":
+            return self._visual_outlier(similarities, match_index)
+        if self._gate_mode == "geometric":
+            return self._passes_gates(
+                delta_xy, combined_cov, self._revisit_radius()
+            )
+        return self._visual_outlier(similarities, match_index) and (
+            self._passes_gates(delta_xy, combined_cov, self._revisit_radius())
+        )
+
     def _find_revisit(self, candidate: TopoNode) -> int | None:
         """Probabilistic + visual revisit test against all existing nodes.
 
-        A node is a revisit if it passes the chi-square gate and the Euclidean
-        radius cap on position AND is a mutual visual nearest neighbour of the
-        candidate.
+        A node is a revisit if it is a mutual visual nearest neighbour of the
+        candidate AND passes the gates selected by ``gate_mode`` (by default
+        both the visual outlier test and the geometric gate).
         """
         ids, features = self.graph.feature_matrix()
         matches: list[tuple[int, int, float]] = mutual_nearest_neighbors(
@@ -513,9 +563,6 @@ class TopologicalMapper:
             return None
 
         similarities: np.ndarray = features @ candidate.visual_features
-        if not self._visual_outlier(similarities, match_index):
-            return None
-
         matched: TopoNode = self.graph.nodes[matched_id]
         delta: np.ndarray = np.array(candidate.pose[:2]) - np.array(
             matched.pose[:2]
@@ -523,7 +570,7 @@ class TopologicalMapper:
         combined_cov: np.ndarray = (
             candidate.pose_covariance + matched.pose_covariance
         )
-        if not self._passes_gates(delta, combined_cov, self._revisit_radius()):
+        if not self._revisit_gates(similarities, match_index, delta, combined_cov):
             return None
         return matched_id
 
@@ -575,15 +622,12 @@ class TopologicalMapper:
             self._reset_loop_candidate()
             return
         similarities: np.ndarray = features @ record.descriptor
-        if not self._visual_outlier(similarities, match_index):
-            self._reset_loop_candidate()
-            return
         matched: TopoNode = self.graph.nodes[matched_id]
         delta: np.ndarray = np.array(record.pose[:2]) - np.array(matched.pose[:2])
         combined_cov: np.ndarray = (
             record.covariance[:2, :2] + matched.pose_covariance
         )
-        if not self._passes_gates(delta, combined_cov, self._revisit_radius()):
+        if not self._revisit_gates(similarities, match_index, delta, combined_cov):
             self._reset_loop_candidate()
             return
 
