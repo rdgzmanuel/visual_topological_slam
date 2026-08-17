@@ -27,8 +27,8 @@ Example gate ablation sweep for one environment:
             config:=cold_freiburg_a.yaml gate_mode:=$m
     done
 
-Multi-map alignment was removed from the default flow to keep a single run
-robust; the vts_alignment package still exists for manual experiments.
+The pipeline intentionally maps one traversal at a time; obsolete multi-map
+alignment code has been removed from the focused implementation.
 """
 
 from __future__ import annotations
@@ -63,6 +63,7 @@ def _make_nodes(context: object) -> list[Node]:
         config: dict[str, object] = yaml.safe_load(f)
 
     mapping: dict[str, object] = dict(config["mapping"])
+    player_executable = str(config.get("player_executable", "cold_player"))
     if gate_mode:
         mapping["gate_mode"] = gate_mode
         if gate_mode != "both":
@@ -78,8 +79,8 @@ def _make_nodes(context: object) -> list[Node]:
         nodes.append(
             Node(
                 package="vts_players",
-                executable="cold_player",
-                name="cold_player",
+                executable=player_executable,
+                name="dataset_player",
                 parameters=[dict(config["player"])],
                 output="screen",
             )

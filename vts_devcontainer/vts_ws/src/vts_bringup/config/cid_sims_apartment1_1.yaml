@@ -1,0 +1,43 @@
+# CID-SIMS Apartment 1, traversal 1. The mapper parameters are exactly the
+# fixed values used for every COLD environment; only the dataset adapter and
+# input paths differ.
+player_executable: "cid_sims_player"
+
+player:
+  dataset_root: "/workspace/encoder"
+  sequences:
+    - "apartment1_1"
+  color_subdir: "color"
+  ground_truth_file: "groundtruth.txt"
+  odometry_file: "odom.txt"
+  # CID-SIMS RGB is 30 Hz. Sampling every sixth image gives approximately
+  # the 5 Hz visual stream used for COLD without changing detector timing.
+  frame_stride: 6
+  max_ground_truth_gap_s: 0.1
+  max_odometry_gap_s: 0.2
+  publish_rate_hz: 20.0
+  inter_sequence_pause_s: 2.0
+  odometry_uncertainty: [0.025, 0.005, 0.01, 0.0025]
+
+mapping:
+  window_size: 30
+  valley_k: 2.0
+  visual_outlier_k: 2.0
+  gate_mode: "both"
+  naive_threshold: 0.7
+  # Final method: loop closures remain topological constraints, but node poses
+  # are not post-processed. The earlier GTSAM runs are retained only as an
+  # ablation because optimization did not improve placement accuracy.
+  optimize: false
+  dino_model: "dinov2_vits14"
+  use_ground_truth: true
+  output_dir: "output/revised/cid_sims_apartment1_1"
+  run_name: "cid_sims_apartment1_1"
+
+language:
+  graph_path: "output/revised/cid_sims_apartment1_1/final_graph.pkl"
+  semantic_model: "openai/clip-vit-base-patch32"
+  mode: "manual"
+  query_sentence: "Go to the kitchen."
+  top_k: 3
+  output_dir: "output/revised/cid_sims_apartment1_1/commands"

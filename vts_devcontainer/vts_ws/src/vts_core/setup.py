@@ -14,7 +14,7 @@ setup(
     zip_safe=True,
     maintainer="Manuel Rodriguez Villegas",
     maintainer_email="manuelrodriguez@alu.comillas.edu",
-    description="Dataset-agnostic core algorithms for visual topological SLAM.",
+    description="Dataset-agnostic core algorithms for visual topological mapping.",
     license="MIT",
     entry_points={
         "console_scripts": [

@@ -1,10 +1,10 @@
-# VTS — ROS 2 workspace
+# Visual topological mapping — ROS 2 workspace
 
-Dataset-agnostic implementation of the visual topological SLAM pipeline for
-ROS 2 Humble (Python 3.10). The mapper never touches a dataset directly: it
-consumes standard topics, and each dataset gets a small *player* node that
-adapts it. See the repository-level `README.md` for the full setup and
-reproduction guide.
+The mapper consumes standard ROS topics and never accesses a dataset
+directly. Each dataset has a small player that implements the same interface.
+The COLD player synchronizes camera frames to the dataset's recorded wheel
+odometry. Because COLD provides no covariance, one fixed motion model
+propagates uncertainty without perturbing the measured trajectory.
 
 ## Packages
 
@@ -15,12 +15,8 @@ vts_core/        Pure-Python algorithm library (no ROS imports):
 vts_players/     COLD player — the ONLY COLD-aware code in the project.
 vts_mapping/     graph_builder node (image + odom -> final_graph.pkl).
 vts_language/    commands node (natural-language query -> node target).
-vts_evaluation/  Offline CLIs: evaluate_run, place_recognition_eval,
-                 calibrate_floorplan, compare_odometry_maps, plot_odometry.
-vts_viz/         Visualization helpers.
+vts_evaluation/  Offline metrics, retrieval evaluation and map plots.
 vts_bringup/     pipeline.launch.py + per-environment YAML configs.
-vts_alignment/   Multi-map fusion (experimental; not part of the default
-                 single-run flow and not launched).
 ```
 
 ## Topic contract
@@ -35,9 +31,11 @@ Any dataset player or real robot must provide:
 | `/dataset/room_label`    | std_msgs/String           | optional, evaluation only |
 | `/dataset/sequence_done` | std_msgs/String (JSON)    | end-of-run signal         |
 
-The chi-square revisit gate relies on the covariance reported on `/odom`; the
-COLD player fills it from the probabilistic motion model, and a real robot
-must report a meaningful covariance as well.
+The revisit mechanism uses covariance reported on `/odom` to generate and
+rank geometrically compatible candidates. A unique candidate is accepted
+directly; bidirectional three-node visual sequences resolve cases where
+several places remain plausible. A real robot or another player must therefore
+report meaningful covariance.
 
 ## Quick start
 
@@ -47,7 +45,7 @@ cd vts_ws
 colcon build --symlink-install
 source install/setup.bash
 
-# Build the map (single sequence -> output/<env>/final_graph.pkl):
+# Build the map (single sequence -> output/revised/<env>/final_graph.pkl):
 ros2 launch vts_bringup pipeline.launch.py config:=cold_freiburg_a.yaml mode:=building
 
 # Answer a natural-language query against the stored map:
@@ -55,8 +53,8 @@ ros2 launch vts_bringup pipeline.launch.py config:=cold_freiburg_a.yaml mode:=co
 
 # Offline evaluation:
 python3 -m vts_evaluation.evaluate_run \
-    --graph output/freiburg_a/final_graph.pkl \
-    --node-gt output/freiburg_a/graph_0_node_gt.json \
+    --graph output/revised/freiburg_a/final_graph.pkl \
+    --node-gt output/revised/freiburg_a/graph_0_node_gt.json \
     --gt-trajectory /workspace/encoder/seq_data/cold-freiburg_part_a_seq2_night1/std_cam
 ```
 

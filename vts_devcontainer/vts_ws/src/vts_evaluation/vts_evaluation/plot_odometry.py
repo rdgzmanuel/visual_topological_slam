@@ -1,18 +1,10 @@
-"""Plot the ground-truth robot path vs the simulated drifting odometry.
+"""Plot ground truth against synchronized recorded wheel odometry.
 
-Renders, side by side, the clean ground-truth trajectory (what the robot
-actually did) and the simulated odometry the mapper consumes (ground truth +
-the probabilistic motion-model drift), so the effect of the ``alpha`` noise is
-visible directly. Both share the same start, so the red path's divergence from
-the green is exactly the accumulated drift.
+Example:
 
     python3 -m vts_evaluation.plot_odometry \
-        --gt-trajectory <cold seq>/std_cam \
-        --alpha 0.05 0.01 0.02 0.005 --odom-seed 17 \
-        --out output/freiburg_a/images/path_compare.png
-
-Uses only NumPy + matplotlib + vts_core.motion (no ROS, no torch). Pass the
-same ``alpha`` / ``odom-seed`` your config uses to match the actual run.
+        --gt-trajectory <sequence>/std_cam \
+        --out output/revised/freiburg_a/images/path_compare.png
 """
 
 from __future__ import annotations
@@ -20,51 +12,59 @@ from __future__ import annotations
 import argparse
 import os
 import re
+from pathlib import Path
 
 import numpy as np
 
-from vts_core.motion import OdometryNoiseParams, OdometrySimulator
+from vts_core.matching import fit_se2
+from vts_players.cold_odometry import load_cold_odometry
+from vts_players.cid_sims_data import load_ground_truth, load_wheel_odometry
 
-_POSE = re.compile(
-    r"_x(?P<x>-?\d+\.?\d*)_y(?P<y>-?\d+\.?\d*)_a(?P<a>-?\d+\.?\d*)"
+_FRAME = re.compile(
+    r"t(?P<t>\d+\.\d+)_x(?P<x>-?\d+\.?\d*)_y(?P<y>-?\d+\.?\d*)"
 )
 
 
-def gt_poses(images_dir: str) -> np.ndarray:
-    """Parse (x, y, theta) ground-truth poses from COLD image filenames."""
-    poses: list[tuple[float, float, float]] = []
-    for name in sorted(os.listdir(images_dir)):
-        match = _POSE.search(name)
+def ground_truth(images_dir: str) -> tuple[np.ndarray, np.ndarray]:
+    """Return COLD camera timestamps and ground-truth XY positions."""
+    samples: list[tuple[float, float, float]] = []
+    for name in os.listdir(images_dir):
+        match = _FRAME.search(name)
         if match is not None:
-            poses.append((
-                float(match.group("x")),
-                float(match.group("y")),
-                float(match.group("a")),
-            ))
-    if not poses:
+            samples.append(
+                (
+                    float(match.group("t")),
+                    float(match.group("x")),
+                    float(match.group("y")),
+                )
+            )
+    samples.sort()
+    if not samples:
         raise RuntimeError(f"No parsable COLD poses in {images_dir}")
-    return np.array(poses, dtype=np.float64)
+    values = np.asarray(samples, dtype=np.float64)
+    return values[:, 0], values[:, 1:3]
 
 
-def simulate_odometry(
-    poses: np.ndarray, alpha: list[float], seed: int
-) -> np.ndarray:
-    """Run the odometry motion model over the GT poses; return (N, 2) xy."""
-    sim = OdometrySimulator(OdometryNoiseParams(*alpha), seed=seed)
-    out = np.array(
-        [sim.step((float(p[0]), float(p[1]), float(p[2])))[0][:2] for p in poses]
-    )
-    return out
+def ground_truth_input(path: str) -> tuple[np.ndarray, np.ndarray]:
+    """Load COLD ``std_cam`` or CID-SIMS ``groundtruth.txt``."""
+    if os.path.isdir(path):
+        return ground_truth(path)
+    stream = load_ground_truth(path)
+    return stream.timestamps, stream.poses[:, :2]
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--gt-trajectory", required=True, help="COLD std_cam dir")
     parser.add_argument(
-        "--alpha", nargs=4, type=float, default=[0.05, 0.01, 0.02, 0.005],
-        metavar=("A1", "A2", "A3", "A4"), help="odometry motion-model noise",
+        "--gt-trajectory",
+        required=True,
+        help="COLD std_cam directory or CID-SIMS groundtruth.txt",
     )
-    parser.add_argument("--odom-seed", type=int, default=17)
+    parser.add_argument(
+        "--odom",
+        help="odom.tdf/odom.txt; inferred from the ground-truth path",
+    )
+    parser.add_argument("--max-odometry-gap-s", type=float, default=1.0)
     parser.add_argument("--out", default="path_compare.png")
     args = parser.parse_args()
 
@@ -73,43 +73,80 @@ def main() -> None:
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    poses = gt_poses(args.gt_trajectory)
-    gt = poses[:, :2]
-    odom = simulate_odometry(poses, args.alpha, args.odom_seed)
-
-    error = np.linalg.norm(odom - gt, axis=1)  # same start -> raw comparison
-    ate = float(np.sqrt(np.mean(error**2)))
-    final_drift = float(error[-1])
-
-    lim_lo = np.minimum(gt.min(0), odom.min(0)) - 1
-    lim_hi = np.maximum(gt.max(0), odom.max(0)) + 1
-    fig, axes = plt.subplots(1, 2, figsize=(14, 7))
-    axes[0].plot(gt[:, 0], gt[:, 1], color="tab:green", lw=1.0)
-    axes[0].set_title("ground truth (no odometry drift)")
-    axes[1].plot(gt[:, 0], gt[:, 1], color="tab:green", lw=0.8, alpha=0.4,
-                 label="ground truth")
-    axes[1].plot(odom[:, 0], odom[:, 1], color="tab:red", lw=1.0,
-                 label="simulated odometry")
-    axes[1].set_title("with odometry drift")
-    axes[1].legend(loc="best", fontsize=8)
-    for ax in axes:
-        ax.scatter([gt[0, 0]], [gt[0, 1]], c="black", s=70, marker="*", zorder=5)
-        ax.set_aspect("equal")
-        ax.set_xlim(lim_lo[0], lim_hi[0])
-        ax.set_ylim(lim_lo[1], lim_hi[1])
-        ax.set_xlabel("x [m]")
-        ax.set_ylabel("y [m]")
-        ax.grid(True, alpha=0.3)
-    fig.suptitle(
-        f"alpha={args.alpha}  seed={args.odom_seed}  |  "
-        f"odometry ATE RMSE={ate:.2f} m, final drift={final_drift:.2f} m"
+    timestamps, gt = ground_truth_input(args.gt_trajectory)
+    if args.odom:
+        odom_path = args.odom
+    elif os.path.isdir(args.gt_trajectory):
+        odom_path = str(
+            Path(args.gt_trajectory).parent / "odom_scans" / "odom.tdf"
+        )
+    else:
+        odom_path = str(Path(args.gt_trajectory).parent / "odom.txt")
+    is_cid_sims = Path(odom_path).name == "odom.txt"
+    recorded = (
+        load_wheel_odometry(odom_path)
+        if is_cid_sims
+        else load_cold_odometry(odom_path)
     )
-    fig.tight_layout()
-    fig.savefig(args.out, dpi=140, bbox_inches="tight")
-    plt.close(fig)
-    print(
-        f"saved {args.out}  |  ATE_rmse={ate:.2f} m  final_drift={final_drift:.2f} m"
+    # Independent sensors rarely start and stop on exactly the same sample.
+    # Evaluate only their temporal intersection instead of treating a few
+    # ground-truth samples outside odometry coverage as malformed data.
+    overlap = np.logical_and(
+        timestamps >= recorded.timestamps[0],
+        timestamps <= recorded.timestamps[-1],
     )
+    timestamps = timestamps[overlap]
+    gt = gt[overlap]
+    if timestamps.size < 2:
+        raise RuntimeError("Ground truth and odometry have no usable overlap")
+    odom = np.asarray(
+        [
+            recorded.at(float(timestamp), args.max_odometry_gap_s)[0][:2]
+            for timestamp in timestamps
+        ],
+        dtype=np.float64,
+    )
+    fit = fit_se2(odom, gt)
+    if fit is None:
+        raise RuntimeError("At least two poses are required for SE(2) alignment")
+    rotation, translation = fit
+    aligned_odom = odom @ rotation.T + translation
+
+    errors = np.linalg.norm(aligned_odom - gt, axis=1)
+    ate = float(np.sqrt(np.mean(errors**2)))
+    median_error = float(np.median(errors))
+
+    limits_low = np.minimum(gt.min(0), aligned_odom.min(0)) - 1.0
+    limits_high = np.maximum(gt.max(0), aligned_odom.max(0)) + 1.0
+    figure, axis = plt.subplots(figsize=(9, 8))
+    axis.plot(
+        gt[:, 0], gt[:, 1], color="tab:green", linewidth=1.6,
+        label="Ground truth",
+    )
+    axis.plot(
+        aligned_odom[:, 0], aligned_odom[:, 1], color="tab:red", linewidth=1.4,
+        label="Recorded wheel odometry",
+    )
+    axis.scatter(
+        [gt[0, 0]], [gt[0, 1]], c="black", s=100, marker="*", label="Start",
+        zorder=5,
+    )
+    axis.set(
+        xlim=(limits_low[0], limits_high[0]),
+        ylim=(limits_low[1], limits_high[1]),
+        xlabel="x [m]",
+        ylabel="y [m]",
+        title=f"Recorded odometry: RMSE {ate:.2f} m, median {median_error:.2f} m",
+    )
+    axis.set_aspect("equal")
+    axis.grid(True, alpha=0.3)
+    axis.legend(loc="best", fontsize=14)
+    figure.tight_layout()
+    output = Path(args.out)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    figure.savefig(output, dpi=300, bbox_inches="tight")
+    plt.close(figure)
+    print(f"saved {output} | ATE_RMSE={ate:.2f} m median={median_error:.2f} m")
 
 
 if __name__ == "__main__":

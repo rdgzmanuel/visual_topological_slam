@@ -8,7 +8,6 @@
   <license>MIT</license>
   <depend>vts_players</depend>
   <depend>vts_mapping</depend>
-  <depend>vts_alignment</depend>
   <depend>vts_language</depend>
   <export>
     <build_type>ament_python</build_type>

@@ -1,13 +1,4 @@
-"""Evaluation metrics for topological maps and language retrieval.
-
-These mirror the *classes* of metrics reported by PRISM-TopoMap (Muravyev et
-al., RA-L 2025) — graph size/compactness, mapping quality against ground
-truth, loop-closure correctness, and computational cost — so your tables can
-be put side-by-side with theirs. Note the honest caveat for the paper:
-PRISM-TopoMap consumes point clouds + multi-camera input and was evaluated
-in Habitat and on a Husky; running *your* method on *their* data (your
-stated plan) yields comparable numbers on shared metrics, but is not a
-same-input head-to-head and should be described as such.
+"""Evaluation metrics for topological maps and text-to-node retrieval.
 
 Conventions:
 - Ground truth is a timestamped trajectory [(t, x, y, theta), ...] (for COLD,
@@ -22,8 +13,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from vts_core.matching import _fit_se2, median_spacing
-from vts_core.topo_graph import TopoGraph
+from vts_core.matching import fit_se2, median_spacing
+from vts_core.topo_graph import LOOP_TEMPORAL_EXCLUSION_NODES, TopoGraph
 
 
 @dataclass
@@ -45,13 +36,28 @@ class GraphMetrics:
     coverage_1m: float
     coverage_2m: float
     node_placement_rmse: float
-    false_merge_rate: float
     spatial_tolerance: float
     # Structural diagnostics (no ground truth needed).
     max_degree: int
     mean_degree: float
     n_components: int
-    n_loop_closures: int
+    n_sequential_edges: int
+    n_loop_edges: int
+    accepted_candidates: int
+    rejected_candidates: int
+    loop_true_positives: int
+    loop_false_positives: int
+    loop_false_negatives: int
+    loop_precision: float
+    loop_recall: float
+    loop_f1: float
+    semantic_loop_evaluable: int
+    semantic_loop_correct: int
+    semantic_loop_shortcuts: int
+    semantic_loop_precision: float
+    duplicate_nodes: int
+    false_shortcuts: int
+    median_path_distortion: float
     # Edge-length diagnostics (ground-truth frame when node_gt is given).
     median_edge_length: float
     max_edge_length: float
@@ -81,7 +87,7 @@ def trajectory_metrics(
     """ATE-style metrics between aligned, same-length (N, 2) trajectories.
 
     Args:
-        estimated: (N, 2) estimated positions (e.g. simulated odometry).
+        estimated: (N, 2) estimated positions (e.g. recorded odometry).
         ground_truth: (N, 2) ground-truth positions.
 
     Returns:
@@ -102,6 +108,7 @@ def graph_metrics(
     ground_truth_xy: np.ndarray,
     node_gt_xy: dict[int, np.ndarray] | None = None,
     spatial_tolerance: float | None = None,
+    loop_tolerance: float = 2.0,
 ) -> GraphMetrics:
     """Quality metrics of a topological map against a ground-truth trajectory.
 
@@ -112,16 +119,14 @@ def graph_metrics(
         node_gt_xy: Optional mapping node_id -> ground-truth (x, y) of the
             frame that created the node (lets placement error be measured in
             the GT frame, immune to odometric drift of the whole map).
-        spatial_tolerance: Radius for coverage / merge checks. Default:
+        spatial_tolerance: Radius for coverage. Default:
             median inter-node spacing (data-driven).
+        loop_tolerance: Ground-truth distance under which a proposed closure
+            is considered the same place. Fixed across all evaluated runs.
 
     Returns:
-        GraphMetrics. ``coverage`` is the fraction of trajectory samples
-        within tolerance of some node; ``false_merge_rate`` is the fraction
-        of edges whose endpoints' GT positions are farther apart than
-        3x tolerance (perceptual-aliasing errors); placement RMSE compares
-        node poses against the nearest GT trajectory point (or
-        ``node_gt_xy`` when given).
+        GraphMetrics. Sequential edges and loop closures are evaluated
+        separately, so traversal edges never dilute closure precision.
     """
     positions: np.ndarray = (
         np.array([node_gt_xy[i] for i in sorted(graph.nodes)], dtype=np.float64)
@@ -164,7 +169,7 @@ def graph_metrics(
         target: np.ndarray = np.array(
             [node_gt_xy[i] for i in ids_for_fit], dtype=np.float64
         )
-        fit: tuple[np.ndarray, np.ndarray] | None = _fit_se2(source, target)
+        fit: tuple[np.ndarray, np.ndarray] | None = fit_se2(source, target)
         if fit is not None:
             rotation, translation = fit
             residuals: np.ndarray = np.linalg.norm(
@@ -176,38 +181,107 @@ def graph_metrics(
         # meaningful if the graph poses live in the GT frame.
         placement = float(np.sqrt(np.mean(distances.min(axis=0) ** 2)))
 
-    # False merges: perceptual-aliasing edges, defined as edges where the
-    # ground truth distance between the endpoints far exceeds the distance
-    # the map itself believes (its own pose difference). The reference must
-    # be the map's own belief, not a global density statistic, which would
-    # wrongly flag legitimately long corridor edges.
+    # Edge and loop-closure accounting. A closure opportunity exists when a
+    # newly emitted node lies within loop_tolerance of any earlier,
+    # non-sequential node. Ground truth is consulted only here, after mapping.
     ids_sorted: list[int] = sorted(graph.nodes)
     index_of: dict[int, int] = {nid: k for k, nid in enumerate(ids_sorted)}
     map_positions: np.ndarray = graph.positions()
     edge_count: int = 0
-    bad_edges: int = 0
     edge_lengths: list[float] = []
     for id_a, id_b in graph.edges():
         edge_count += 1
         gt_dist: float = float(
             np.linalg.norm(positions[index_of[id_a]] - positions[index_of[id_b]])
         )
-        map_dist: float = float(
-            np.linalg.norm(
-                map_positions[index_of[id_a]] - map_positions[index_of[id_b]]
-            )
-        )
         edge_lengths.append(gt_dist)
-        if gt_dist > map_dist + 3.0 * tolerance:
-            bad_edges += 1
-    false_merge_rate: float = bad_edges / edge_count if edge_count else 0.0
 
-    # Structural diagnostics. Hubs (very high degree) flagged the
-    # descriptor-pollution failure mode; the loop-closure count is the circuit
-    # rank E - V + C (independent cycles), i.e. how many loops the map closed.
+    edge_types = getattr(graph, "edge_types", {})
+    sequential_edges = sum(
+        edge_types.get(edge, "odometry") == "odometry" for edge in graph.edges()
+    )
+    loop_edges = sum(edge_types.get(edge) == "loop" for edge in graph.edges())
+    accepted = rejected = true_positives = false_positives = false_negatives = 0
+    semantic_evaluable = semantic_correct = semantic_shortcuts = 0
+    duplicate_nodes = 0
+    for event in getattr(graph, "loop_events", []):
+        query_id = event.query_node_id
+        if query_id not in index_of:
+            continue
+        query_index = index_of[query_id]
+        prior_ids = [
+            node_id for node_id in ids_sorted
+            if (
+                node_id < query_id - LOOP_TEMPORAL_EXCLUSION_NODES
+                and node_id in index_of
+            )
+        ]
+        has_opportunity = any(
+            float(np.linalg.norm(
+                positions[query_index] - positions[index_of[node_id]]
+            )) <= loop_tolerance
+            for node_id in prior_ids
+        )
+        accepted += int(event.accepted)
+        rejected += int(not event.accepted)
+        accepted_true = False
+        if event.accepted and event.matched_node_id in index_of:
+            query_label = graph.nodes[query_id].room_label
+            match_label = graph.nodes[int(event.matched_node_id)].room_label
+            if query_label and match_label:
+                semantic_evaluable += 1
+                same_semantic_place = query_label == match_label
+                semantic_correct += int(same_semantic_place)
+                semantic_shortcuts += int(not same_semantic_place)
+            match_distance = float(np.linalg.norm(
+                positions[query_index]
+                - positions[index_of[int(event.matched_node_id)]]
+            ))
+            accepted_true = match_distance <= loop_tolerance
+            true_positives += int(accepted_true)
+            false_positives += int(not accepted_true)
+        if has_opportunity and not accepted_true:
+            false_negatives += 1
+            duplicate_nodes += 1
+
+    precision = (
+        true_positives / (true_positives + false_positives)
+        if true_positives + false_positives else 0.0
+    )
+    recall = (
+        true_positives / (true_positives + false_negatives)
+        if true_positives + false_negatives else 0.0
+    )
+    f1 = 2.0 * precision * recall / (precision + recall) if precision + recall else 0.0
+    semantic_precision = (
+        semantic_correct / semantic_evaluable if semantic_evaluable else 0.0
+    )
+
+    # Pairwise shortest-path distortion in the estimated map against direct
+    # GT displacement. This is a topology-sensitive diagnostic: false
+    # shortcuts and stretched routes both increase it. It is not navigation
+    # success, which requires a robot execution benchmark.
+    count = len(ids_sorted)
+    shortest = np.full((count, count), np.inf, dtype=np.float64)
+    np.fill_diagonal(shortest, 0.0)
+    for id_a, id_b in graph.edges():
+        ia, ib = index_of[id_a], index_of[id_b]
+        length = float(np.linalg.norm(map_positions[ia] - map_positions[ib]))
+        shortest[ia, ib] = shortest[ib, ia] = max(length, 1e-6)
+    for k in range(count):
+        shortest = np.minimum(shortest, shortest[:, k, None] + shortest[None, k, :])
+    distortions: list[float] = []
+    for i in range(count):
+        for j in range(i + 1, count):
+            direct = float(np.linalg.norm(positions[i] - positions[j]))
+            if direct > 1e-6 and np.isfinite(shortest[i, j]):
+                distortions.append(abs(shortest[i, j] / direct - 1.0))
+    path_distortion = float(np.median(distortions)) if distortions else float("nan")
+
+    # Structural diagnostics. Connectivity is retained as a sanity check, not
+    # a headline metric: sequential edges make a single component expected.
     degrees: list[int] = [len(graph.adjacency.get(i, set())) for i in graph.nodes]
     n_components: int = _connected_components(graph)
-    n_loop_closures: int = max(edge_count - len(graph.nodes) + n_components, 0)
 
     return GraphMetrics(
         n_nodes=len(graph.nodes),
@@ -216,12 +290,27 @@ def graph_metrics(
         coverage_1m=coverage_1m,
         coverage_2m=coverage_2m,
         node_placement_rmse=placement,
-        false_merge_rate=false_merge_rate,
         spatial_tolerance=tolerance,
         max_degree=max(degrees, default=0),
         mean_degree=float(np.mean(degrees)) if degrees else 0.0,
         n_components=n_components,
-        n_loop_closures=n_loop_closures,
+        n_sequential_edges=int(sequential_edges),
+        n_loop_edges=int(loop_edges),
+        accepted_candidates=accepted,
+        rejected_candidates=rejected,
+        loop_true_positives=true_positives,
+        loop_false_positives=false_positives,
+        loop_false_negatives=false_negatives,
+        loop_precision=precision,
+        loop_recall=recall,
+        loop_f1=f1,
+        semantic_loop_evaluable=semantic_evaluable,
+        semantic_loop_correct=semantic_correct,
+        semantic_loop_shortcuts=semantic_shortcuts,
+        semantic_loop_precision=semantic_precision,
+        duplicate_nodes=duplicate_nodes,
+        false_shortcuts=false_positives,
+        median_path_distortion=path_distortion,
         median_edge_length=float(np.median(edge_lengths)) if edge_lengths else 0.0,
         max_edge_length=float(np.max(edge_lengths)) if edge_lengths else 0.0,
     )
@@ -281,13 +370,12 @@ def descriptor_separation(graph: TopoGraph) -> dict[str, float]:
 
 
 def map_footprint(graph: TopoGraph) -> dict[str, float]:
-    """Map size for the PRISM Table V comparison ("Map size, MB").
+    """Full and descriptors-only map footprint.
 
     Reports both the full in-memory footprint (descriptors + stored RGB views)
     and the serialized size of a descriptors-only map (no images). VTS keeps RGB
-    views for the downstream language module, so its full map is necessarily
-    larger than PRISM's 0.4 MB (which stores descriptors + 2D scans, no raw
-    RGB); the descriptors-only number is the fair like-for-like analogue.
+    views for the downstream text-to-node module, so both footprints are
+    reported explicitly.
 
     Returns:
         Dict of byte counts: ``descriptor_bytes``, ``view_bytes``,
@@ -301,7 +389,13 @@ def map_footprint(graph: TopoGraph) -> dict[str, float]:
     for node_id, node in graph.nodes.items():
         features: np.ndarray = np.asarray(node.visual_features)
         descriptor_bytes += int(features.nbytes)
-        descriptors_only[node_id] = features.astype(np.float32)
+        view_features = getattr(node, "view_features", None)
+        if view_features is not None:
+            compact_features = np.asarray(view_features, dtype=np.float32)
+            descriptor_bytes += int(compact_features.nbytes)
+        else:
+            compact_features = features.astype(np.float32)[None, :]
+        descriptors_only[node_id] = compact_features
         for view in node.views:
             if view is not None:
                 view_bytes += int(np.asarray(view).nbytes)
@@ -334,13 +428,13 @@ def place_recognition_recall(
     db_index: np.ndarray | None = None,
     exclude_window: int = 0,
 ) -> dict[str, float]:
-    """Average Recall@k for visual place recognition (PRISM Table II protocol).
+    """Average Recall@k for visual place recognition.
 
     For each query, the database entries are ranked by descriptor similarity
-    (cosine; for L2-normalized descriptors this matches PRISM's Euclidean
-    ranking). The query is a hit@k if ANY of its top-k database neighbours lies
+    (cosine on L2-normalized descriptors). The query is a hit@k if any of its
+    top-k database neighbours lies
     within ``distance_threshold`` metres of the query's true position. Recall@k
-    is the fraction of queries that are a hit@k, i.e. PRISM's AR@k.
+    is the fraction of queries that are a hit@k.
 
     Args:
         query_descriptors: (Q, d) query descriptors.
@@ -348,13 +442,12 @@ def place_recognition_recall(
         db_descriptors: (D, d) database descriptors.
         db_xy: (D, 2) database ground-truth positions.
         k_values: cutoffs to report (e.g. (1, 5) -> recall_at_1, recall_at_5).
-        distance_threshold: metres within which a retrieved place counts as
-            correct (PRISM use 5 m).
+        distance_threshold: metres within which a retrieved place counts as correct.
         query_index, db_index: optional 1-D frame indices. When both are given,
             database entries whose index is within ``exclude_window`` of the
             query's index are dropped BEFORE ranking. This is how the
-            *within-traversal* protocol excludes near-in-time self-matches
-            (PRISM exclude "frames from identical locations"); leave unset for
+            *within-traversal* protocol excludes near-in-time self-matches;
+            leave unset for
             the *cross-traversal* protocol, where query and database are
             different runs and no self-match exists.
         exclude_window: half-width (in index units) of the self-match exclusion.
@@ -455,7 +548,7 @@ def retrieval_report(
             order.
         true_labels: the correct room label per query.
         confident_flags: per query, whether the retriever committed to an answer
-            (its calibrated-rejection decision). Enables coverage/precision.
+            under its margin heuristic. Enables coverage/precision.
         k: cutoff for Recall@k.
 
     Returns:
@@ -465,8 +558,7 @@ def retrieval_report(
         - ``confusion``: true-label -> {predicted top-1 label: count}.
         - ``rejection`` (if ``confident_flags`` given): coverage (fraction
           answered), precision@1 on answered queries, recall@1 if always
-          answering, and the fraction of wrong answers correctly rejected — the
-          evidence that calibrated rejection trades coverage for precision.
+          answering, and the fraction of wrong answers correctly rejected.
     """
     n: int = len(true_labels)
     if n == 0:
@@ -525,11 +617,11 @@ def retrieval_report(
 def rejection_curve(
     correct_top1: list[bool], margins: list[float]
 ) -> list[dict[str, float]]:
-    """Coverage vs precision as the rejection threshold sweeps.
+    """Coverage vs precision as the heuristic margin threshold sweeps.
 
     For each candidate top-2 posterior-margin threshold, report the fraction of
     queries answered (coverage) and the top-1 accuracy on those (precision). The
-    operating curve of the calibrated-rejection rule — the figure to plot.
+    operating curve of the margin-based rejection rule — the figure to plot.
 
     Args:
         correct_top1: per query, whether the top-1 label was correct.

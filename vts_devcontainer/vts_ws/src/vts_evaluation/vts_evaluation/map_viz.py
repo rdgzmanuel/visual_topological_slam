@@ -9,7 +9,7 @@ quality is inspectable at a glance:
   ground-truth coordinates of the frame that created it. Ground truth is a
   paint-time input only: the mapper decides where and when to place nodes
   from odometry alone and never reads GT.
-- Edges are drawn between nodes in a single uniform colour.
+- Sequential traversal edges and loop closures use distinct line styles.
 - The GT trajectory is drawn underneath for spatial context.
 
 Every figure is additionally exported as ``.pgf`` (when the local TeX
@@ -77,7 +77,7 @@ def render_map(
 
     When ``node_gt`` covers every node, nodes are painted at their
     ground-truth coordinates (paint-time only — the mapper placed them from
-    odometry); otherwise the mapper's own (anchored-odometry) positions are
+    odometry); otherwise the mapper's own odometry-frame positions are
     drawn.
     """
     try:
@@ -111,13 +111,20 @@ def render_map(
 
     for id_a, id_b in graph.edges():
         ka, kb = index[id_a], index[id_b]
+        edge_type = graph.edge_types.get((id_a, id_b), "odometry")
+        is_loop = edge_type == "loop"
         ax.plot(
             [drawn[ka, 0], drawn[kb, 0]],
             [drawn[ka, 1], drawn[kb, 1]],
-            color="steelblue", lw=1.2, alpha=0.9, zorder=4,
+            color="crimson" if is_loop else "0.45",
+            linestyle="--" if is_loop else "-",
+            lw=2.0 if is_loop else 1.1,
+            alpha=0.95 if is_loop else 0.75,
+            zorder=4 if is_loop else 2,
         )
 
-    labels: list[str] = [graph.nodes[i].room_label or "?" for i in ids]
+    has_room_labels: bool = any(graph.nodes[i].room_label for i in ids)
+    labels: list[str] = [graph.nodes[i].room_label or "Node" for i in ids]
     unique: list[str] = sorted(set(labels))
     cmap = plt.get_cmap("tab10" if len(unique) <= 10 else "tab20")
     color_of: dict[str, tuple] = {
@@ -135,11 +142,15 @@ def render_map(
         for label in unique
     ]
     edge_handles = [
-        plt.Line2D([0], [0], color="steelblue", lw=2, label="Edge"),
+        plt.Line2D([0], [0], color="0.45", lw=2, label="Sequential edge"),
+        plt.Line2D(
+            [0], [0], color="crimson", lw=2, linestyle="--",
+            label="Loop closure",
+        ),
     ]
     ax.legend(
         handles=room_handles + edge_handles, loc="best",
-        fontsize=_LEGEND_FONTSIZE, title="Room",
+        fontsize=_LEGEND_FONTSIZE, title="Room" if has_room_labels else None,
         title_fontsize=_LEGEND_TITLE_FONTSIZE, framealpha=0.9, ncol=1,
     )
 
@@ -147,7 +158,8 @@ def render_map(
     ax.grid(True, alpha=0.3)
     ax.set_xlabel("x [m]")
     ax.set_ylabel("y [m]")
-    ax.set_title(title or "Topological map")
+    if title:
+        ax.set_title(title)
     fig.tight_layout()
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     _save_latex_figure(fig, out_path)
@@ -206,7 +218,7 @@ def render_confusion(
 def render_rejection_curve(
     curve: list[dict[str, float]], out_path: str, title: str | None = None
 ) -> bool:
-    """Plot the coverage-vs-precision operating curve of calibrated rejection."""
+    """Plot the coverage-vs-precision curve of margin-based rejection."""
     try:
         import matplotlib
 
@@ -311,12 +323,18 @@ def render_on_floorplan(
     index: dict[int, int] = {nid: k for k, nid in enumerate(ids)}
     for id_a, id_b in graph.edges():
         ka, kb = index[id_a], index[id_b]
+        edge_type = graph.edge_types.get((id_a, id_b), "odometry")
+        is_loop = edge_type == "loop"
         ax.plot(
             [cols[ka], cols[kb]], [rows[ka], rows[kb]],
-            color="steelblue", lw=1.3, zorder=4,
+            color="crimson" if is_loop else "0.45",
+            linestyle="--" if is_loop else "-",
+            lw=2.0 if is_loop else 1.1,
+            zorder=4 if is_loop else 2,
         )
 
-    labels: list[str] = [graph.nodes[i].room_label or "?" for i in ids]
+    has_room_labels: bool = any(graph.nodes[i].room_label for i in ids)
+    labels: list[str] = [graph.nodes[i].room_label or "Node" for i in ids]
     unique: list[str] = sorted(set(labels))
     cmap = plt.get_cmap("tab10" if len(unique) <= 10 else "tab20")
     color_of = {label: cmap(k % cmap.N) for k, label in enumerate(unique)}
@@ -330,14 +348,25 @@ def render_on_floorplan(
                    markeredgecolor="black", markersize=_LEGEND_MARKERSIZE, label=label)
         for label in unique
     ]
+    handles.extend(
+        [
+            plt.Line2D([0], [0], color="0.45", lw=2, label="Sequential edge"),
+            plt.Line2D(
+                [0], [0], color="crimson", lw=2, linestyle="--",
+                label="Loop closure",
+            ),
+        ]
+    )
     ax.set_xlim(0, width)
     ax.set_ylim(height, 0)
     ax.axis("off")
     ax.legend(
         handles=handles, loc="lower left", fontsize=_LEGEND_FONTSIZE,
-        title="Room", title_fontsize=_LEGEND_TITLE_FONTSIZE,
+        title="Room" if has_room_labels else None,
+        title_fontsize=_LEGEND_TITLE_FONTSIZE,
     )
-    ax.set_title(title or "Map on floorplan")
+    if title:
+        ax.set_title(title)
     fig.savefig(out_path, dpi=140, bbox_inches="tight")
     _save_latex_figure(fig, out_path)
     plt.close(fig)

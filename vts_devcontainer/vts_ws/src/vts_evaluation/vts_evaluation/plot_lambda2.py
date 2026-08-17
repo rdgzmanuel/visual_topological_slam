@@ -6,7 +6,7 @@ exactly what the mapper detected for a given ``valley_k``. Used to generate
 the node-extraction figure of the paper.
 
     python3 -m vts_evaluation.plot_lambda2 \
-        --lambda2 output/freiburg_a/graph_0_lambda2.npy \
+        --lambda2 output/revised/freiburg_a/graph_0_lambda2.npy \
         --valley-k 1.5 --out lambda2_valleys.pdf
 """
 
@@ -62,13 +62,14 @@ def main() -> None:
     for i, v in enumerate(shown):
         ax.axvline(v, color="0.35", lw=0.9, linestyle="--",
                    label="detected valley" if i == 0 else None)
-    ax.set_xlabel("frame index")
-    ax.set_ylabel(r"algebraic connectivity $\lambda_2$")
+    ax.set_xlabel("Frame index", fontsize=13)
+    ax.set_ylabel(r"Algebraic connectivity $\lambda_2$", fontsize=13)
+    ax.tick_params(labelsize=12)
     ax.set_xlim(start, len(series) - 1)
     ax.grid(True, alpha=0.3)
-    ax.legend(loc="upper right", fontsize=9, framealpha=1.0)
+    ax.legend(loc="upper right", fontsize=14, framealpha=1.0)
     fig.tight_layout()
-    fig.savefig(args.out, dpi=200, bbox_inches="tight")
+    fig.savefig(args.out, dpi=300, bbox_inches="tight")
     plt.close(fig)
     print(f"[lambda2] figure saved to {args.out}")
 

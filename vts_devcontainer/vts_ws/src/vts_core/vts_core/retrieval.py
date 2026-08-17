@@ -17,7 +17,7 @@ What changed relative to the thesis code and why:
    checkpoint can be selected by name. ViT-B/32 remains the default; for the
    paper, evaluate at least one stronger checkpoint (e.g.
    ``openai/clip-vit-large-patch14`` or ``google/siglip-base-patch16-224``).
-4. **Calibrated rejection instead of a similarity threshold.** Raw CLIP
+4. **Heuristic ambiguity rejection instead of a similarity threshold.** Raw CLIP
    cosine similarities are not comparable across queries, so a fixed
    threshold cannot work. We instead softmax the scores over nodes with the
    model's own learned logit scale and reject when the distribution is too
@@ -46,7 +46,7 @@ _PROMPT_TEMPLATES: tuple[str, ...] = (
 # Minimum top-2 posterior margin for an unambiguous answer. With softmax at
 # CLIP's logit scale, 0.1 means "the best node holds at least 10 percentage
 # points more probability mass than the runner-up" — a relative,
-# query-independent criterion, not a similarity cutoff.
+# per-query heuristic, not a calibrated probability or similarity cutoff.
 _MIN_POSTERIOR_MARGIN: float = 0.1
 
 # Imperative command phrasings stripped to recover the bare place description,
@@ -177,7 +177,7 @@ class PlaceRetriever:
             confident_flag). The raw cosine score is the multi-view max-pooled
             image/text similarity, surfaced for debugging and inspection.
             ``confident_flag`` is False when the top-2 posterior margin is
-            below the rejection bound — the caller should treat the answer
+            below the heuristic rejection bound — the caller should treat the answer
             as ambiguous (e.g. ask the user to disambiguate among top-k).
         """
         text_embedding: np.ndarray = self._encoder.embed_text(sentence)

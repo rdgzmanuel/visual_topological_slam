@@ -1,22 +1,16 @@
-"""Visual place-recognition recall for the PRISM-TopoMap comparison.
+"""Visual place-recognition recall for the frozen DINOv2 descriptor.
 
-Evaluates the *encoder* (not the topological map) with PRISM-TopoMap's
-place-recognition protocol (their Table II): rank a database of frames by
+Evaluates the *encoder* (not the topological map): rank a database of frames by
 descriptor similarity to each query and count a hit@k if any top-k neighbour is
 physically within a distance threshold of the query. This isolates the place
-recognition quality on COLD so it can be tabled next to PRISM's AR@1 / AR@5.
-
-Because the comparison is cross-dataset and cross-sensor (PRISM report Habitat,
-multi-camera + LiDAR; we report COLD, monocular), this is a metric-CLASS
-comparison, not a head-to-head — and the fair visual baseline is PRISM's
-RGB-only models (GeM/NetVLAD/MixVPR/CosPlace), not the multimodal MSSPlace-G.
+recognition quality independently of graph construction.
 
 Two protocols are reported:
 
 - ``cross-condition`` (the meaningful COLD story): database and queries are the
   SAME physical route under DIFFERENT lighting/time (e.g. db=night, query=
   cloudy/sunny). Tests appearance invariance; no self-matches, so no exclusion.
-- ``within`` (mirrors PRISM exactly): query and database are the same run;
+- ``within``: query and database are the same run;
   near-in-time frames are excluded so a frame cannot trivially match itself.
 
 Descriptors are cached per traversal (extraction is the only slow step), so
@@ -26,12 +20,10 @@ re-running with different thresholds/protocols is instant.
         --db   /workspace/encoder/seq_data/cold-freiburg_part_a_seq2_night1/std_cam \
         --queries /workspace/encoder/seq_data/cold-freiburg_part_a_seq2_cloudy1/std_cam \
                   /workspace/encoder/seq_data/cold-freiburg_part_a_seq2_sunny1/std_cam \
-        --extractor finetuned:src \
-        --model-name visual_encoder_dino_contrastive_dim128_best \
-        --encoder-path /workspace/encoder \
+        --model-name dinov2_vits14 \
         --cache-dir /tmp/pr_desc --thresholds 2 5 --within
 
-Needs torch + the encoder (run it in the container).
+Needs torch and the cached/downloaded stock DINOv2 model.
 """
 
 from __future__ import annotations
@@ -56,9 +48,7 @@ def _traversal_name(images_dir: str) -> str:
 
 def load_descriptors(
     images_dir: str,
-    extractor_spec: str,
     model_name: str,
-    encoder_path: str,
     cache_dir: str,
     stride: int = 1,
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -81,7 +71,7 @@ def load_descriptors(
         [[float(_POSE.search(n).group(g)) for g in ("x", "y")] for n in names],
         dtype=np.float64,
     )
-    extractor = build_extractor(extractor_spec, model_name, encoder_path)
+    extractor = build_extractor(model_name)
     descs: list[np.ndarray] = []
     for i, fname in enumerate(names):
         image = cv2.imread(os.path.join(images_dir, fname), cv2.IMREAD_COLOR)
@@ -109,14 +99,12 @@ def main() -> None:
         help="cross-condition query traversal std_cam dirs (same route, other "
              "lighting). Omit to run only the within-traversal protocol.",
     )
-    parser.add_argument("--extractor", default="finetuned:src")
-    parser.add_argument("--model-name", default="visual_encoder_dino_contrastive_dim128_best")
-    parser.add_argument("--encoder-path", default="/workspace/encoder")
+    parser.add_argument("--model-name", default="dinov2_vits14")
     parser.add_argument("--cache-dir", default="")
     parser.add_argument("--stride", type=int, default=1, help="subsample frames")
     parser.add_argument(
         "--thresholds", nargs="+", type=float, default=[2.0, 5.0],
-        help="positive-match distance thresholds in metres (PRISM use 5)",
+        help="positive-match distance thresholds in metres",
     )
     parser.add_argument("--k", nargs="+", type=int, default=[1, 5])
     parser.add_argument(
@@ -138,8 +126,7 @@ def main() -> None:
 
     k_values: tuple[int, ...] = tuple(args.k)
     db_desc, db_xy = load_descriptors(
-        args.db, args.extractor, args.model_name, args.encoder_path,
-        args.cache_dir, args.stride,
+        args.db, args.model_name, args.cache_dir, args.stride,
     )
     db_name: str = _traversal_name(args.db)
     results["database"] = db_name
@@ -162,8 +149,7 @@ def main() -> None:
         aggregated: list[dict[str, float]] = []
         for query_dir in args.queries:
             q_desc, q_xy = load_descriptors(
-                query_dir, args.extractor, args.model_name, args.encoder_path,
-                args.cache_dir, args.stride,
+                query_dir, args.model_name, args.cache_dir, args.stride,
             )
             rec = place_recognition_recall(
                 q_desc, q_xy, db_desc, db_xy, k_values, threshold

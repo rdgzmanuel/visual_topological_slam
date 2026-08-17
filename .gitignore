@@ -5,6 +5,10 @@ docs/design_decisions.md
 # Data folders
 encoder/seq_data/
 encoder/data/
+encoder/cid_sims/
+encoder/apartment1_1/
+encoder/apartment2_1/
+encoder/apartment3_1/
 
 # Model folders
 encoder/runs/

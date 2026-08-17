@@ -1,66 +1,17 @@
-"""Matching primitives shared by loop closure and multi-map alignment.
+"""Matching primitives for visual loop closure and geometric gating.
 
-Design principle: replace absolute thresholds with *relative* and
-*probabilistic* criteria.
-
-- Visual association uses mutual nearest neighbors plus Lowe's ratio test on
-  cosine distances; both are relative criteria with standard, citable
-  constants rather than per-dataset magic numbers.
-- Metric gating uses the chi-square test on the Mahalanobis distance under
-  the odometry covariance, so the gate widens automatically as uncertainty
-  grows instead of using a fixed metres threshold.
-- Cross-map geometric consistency is enforced with an SE(2) RANSAC whose
-  inlier tolerance is derived from the data (median node spacing).
+Metric gating uses a chi-square test on Mahalanobis distance under odometry
+and place-extent covariance, so it scales with uncertainty instead of using a
+fixed distance threshold. Visual ranking and its MAD-relative acceptance test
+live together in :mod:`vts_core.mapper`.
 """
 
 from __future__ import annotations
 
 import numpy as np
-from scipy.stats import chi2
 
-_LOWE_RATIO: float = 0.8
-_CHI2_CONFIDENCE: float = 0.95
-_CHI2_GATE_2DOF: float = float(chi2.ppf(_CHI2_CONFIDENCE, df=2))
-
-
-def mutual_nearest_neighbors(
-    features_a: np.ndarray, features_b: np.ndarray
-) -> list[tuple[int, int, float]]:
-    """Mutual-NN matches between two sets of L2-normalized descriptors.
-
-    A pair (i, j) is kept if j is i's nearest neighbor in B, i is j's nearest
-    neighbor in A, and i's best similarity passes Lowe's ratio test against
-    its second-best (applied in cosine-distance space).
-
-    Args:
-        features_a: (Na, d) normalized descriptors.
-        features_b: (Nb, d) normalized descriptors.
-
-    Returns:
-        List of (index_a, index_b, cosine_similarity) tuples.
-    """
-    if features_a.size == 0 or features_b.size == 0:
-        return []
-
-    similarity: np.ndarray = features_a @ features_b.T  # (Na, Nb)
-    best_b_for_a: np.ndarray = np.argmax(similarity, axis=1)
-    best_a_for_b: np.ndarray = np.argmax(similarity, axis=0)
-
-    matches: list[tuple[int, int, float]] = []
-    for i in range(similarity.shape[0]):
-        j: int = int(best_b_for_a[i])
-        if int(best_a_for_b[j]) != i:
-            continue
-
-        row: np.ndarray = similarity[i]
-        if row.shape[0] >= 2:
-            sorted_row: np.ndarray = np.sort(row)[::-1]
-            best_dist: float = 1.0 - float(sorted_row[0])
-            second_dist: float = 1.0 - float(sorted_row[1])
-            if second_dist > 1e-12 and best_dist / second_dist > _LOWE_RATIO:
-                continue
-        matches.append((i, j, float(row[j])))
-    return matches
+# 95th percentile of chi-square with two degrees of freedom.
+_CHI2_GATE_2DOF: float = 5.991464547107979
 
 
 def mahalanobis_gate(
@@ -75,69 +26,42 @@ def mahalanobis_gate(
     Returns:
         True if the difference is statistically compatible with zero.
     """
-    cov: np.ndarray = covariance_xy + np.eye(2) * 1e-6
+    d2 = mahalanobis_distance_squared(delta_xy, covariance_xy)
+    return bool(np.isfinite(d2) and d2 <= _CHI2_GATE_2DOF)
+
+
+def mahalanobis_distance_squared(
+    delta_xy: np.ndarray, covariance_xy: np.ndarray
+) -> float:
+    """Return the normalized innovation squared for a 2-D displacement."""
+    cov: np.ndarray = np.asarray(covariance_xy, dtype=np.float64)
+    cov = 0.5 * (cov + cov.T) + np.eye(2) * 1e-6
     try:
-        inv: np.ndarray = np.linalg.inv(cov)
+        solution = np.linalg.solve(cov, np.asarray(delta_xy, dtype=np.float64))
     except np.linalg.LinAlgError:
-        return False
-    d2: float = float(delta_xy @ inv @ delta_xy)
-    return d2 <= _CHI2_GATE_2DOF
+        return float("inf")
+    return float(np.asarray(delta_xy, dtype=np.float64) @ solution)
 
 
-def estimate_se2_ransac(
-    points_a: np.ndarray,
-    points_b: np.ndarray,
-    inlier_tolerance: float,
-    iterations: int = 500,
-    seed: int = 17,
-) -> tuple[np.ndarray, np.ndarray] | None:
-    """Estimate a rigid SE(2) transform mapping points_a onto points_b.
+def gaussian_position_nll(
+    delta_xy: np.ndarray, covariance_xy: np.ndarray
+) -> float:
+    """Gaussian position negative log-likelihood, up to a shared constant.
 
-    Args:
-        points_a: (N, 2) source positions.
-        points_b: (N, 2) corresponding target positions.
-        inlier_tolerance: Residual (m) under which a pair counts as inlier;
-            derive it from the data (e.g. median inter-node spacing), not a
-            constant.
-        iterations: RANSAC iterations.
-        seed: RNG seed for reproducibility.
-
-    Returns:
-        (2x2 rotation, 2-translation) of the best model and refit on its
-        inliers, or None if no model with >= 3 inliers exists.
+    Unlike Mahalanobis distance alone, this score includes the covariance
+    volume. A highly uncertain candidate therefore becomes uninformative
+    instead of automatically looking compatible with every position.
     """
-    n: int = points_a.shape[0]
-    if n < 2:
-        return None
-
-    rng: np.random.Generator = np.random.default_rng(seed)
-    best_inliers: np.ndarray | None = None
-
-    for _ in range(iterations):
-        idx: np.ndarray = rng.choice(n, size=2, replace=False)
-        model: tuple[np.ndarray, np.ndarray] | None = _fit_se2(
-            points_a[idx], points_b[idx]
-        )
-        if model is None:
-            continue
-        rotation, translation = model
-        residuals: np.ndarray = np.linalg.norm(
-            (points_a @ rotation.T + translation) - points_b, axis=1
-        )
-        inliers: np.ndarray = residuals < inlier_tolerance
-        if best_inliers is None or int(inliers.sum()) > int(best_inliers.sum()):
-            best_inliers = inliers
-
-    if best_inliers is None or int(best_inliers.sum()) < 3:
-        return None
-
-    refit: tuple[np.ndarray, np.ndarray] | None = _fit_se2(
-        points_a[best_inliers], points_b[best_inliers]
-    )
-    return refit
+    covariance = np.asarray(covariance_xy, dtype=np.float64)
+    covariance = 0.5 * (covariance + covariance.T) + np.eye(2) * 1e-6
+    sign, log_determinant = np.linalg.slogdet(covariance)
+    if sign <= 0.0:
+        return float("inf")
+    d2 = mahalanobis_distance_squared(delta_xy, covariance)
+    return 0.5 * (d2 + float(log_determinant))
 
 
-def _fit_se2(
+def fit_se2(
     points_a: np.ndarray, points_b: np.ndarray
 ) -> tuple[np.ndarray, np.ndarray] | None:
     """Least-squares SE(2) fit (Umeyama without scale)."""

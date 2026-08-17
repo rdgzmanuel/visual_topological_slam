@@ -1,16 +1,9 @@
-"""Node detection via algebraic connectivity with adaptive valley detection.
+"""Node detection from a non-negative visual affinity graph.
 
-The sliding-window affinity matrix and normalized-Laplacian machinery is kept
-from the thesis (it is the core contribution), but the peak/valley logic is
-reworked: the two hand-tuned proportions (``gamma_proportion`` and
-``delta_proportion``) are replaced by a single robust-statistics rule. A
-valley is confirmed when the eigenvalue series rises above its running
-minimum by more than ``k`` median-absolute-deviations (MAD) of the series'
-recent variation, with ``k = 3`` — the conventional robust outlier constant.
-This adapts automatically to the signal's noise level in each environment
-instead of requiring per-dataset tuning, which directly serves the
-"threshold-free" goal: the remaining constant has a standard statistical
-meaning rather than being a per-environment magic number.
+Cosine similarity is first clamped to ``[0, 1]``.  This is essential: a
+normalized graph Laplacian assumes non-negative edge weights, whereas raw
+cosine similarity may be negative.  Isolated (zero-degree) vertices use the
+standard convention ``D^{-1/2}_{ii}=0`` and ``L_{ii}=0``.
 """
 
 from __future__ import annotations
@@ -18,10 +11,7 @@ from __future__ import annotations
 from collections import deque
 
 import numpy as np
-import scipy.sparse
-from scipy.sparse.linalg import eigsh
 
-_SPARSE_MATRIX_THRESHOLD: int = 50
 _MAD_TO_STD: float = 1.4826  # consistency constant for Gaussian data
 
 
@@ -72,8 +62,9 @@ class ConnectivityMonitor:
             )
 
         similarities: np.ndarray = self.window_features[:-1] @ descriptor
-        self.affinity[:-1, -1] = similarities
-        self.affinity[-1, :-1] = similarities
+        weights: np.ndarray = np.clip(similarities, 0.0, 1.0)
+        self.affinity[:-1, -1] = weights
+        self.affinity[-1, :-1] = weights
         self.affinity[-1, -1] = 0.0
 
         degrees: np.ndarray = self.affinity.sum(axis=1)
@@ -81,18 +72,21 @@ class ConnectivityMonitor:
         if self.window_length < 2:
             return None
 
-        inv_sqrt: np.ndarray = 1.0 / np.sqrt(np.maximum(degrees, 1e-10))
+        nonzero: np.ndarray = degrees > 1e-12
+        inv_sqrt: np.ndarray = np.zeros_like(degrees, dtype=np.float64)
+        inv_sqrt[nonzero] = 1.0 / np.sqrt(degrees[nonzero])
         laplacian: np.ndarray = np.eye(self.affinity.shape[0], dtype=np.float64) - (
             inv_sqrt[:, None] * self.affinity * inv_sqrt[None, :]
         )
+        # For isolated vertices use L_ii=0, so they contribute a zero
+        # eigenvalue rather than an artificial unit self-penalty.
+        laplacian[~nonzero, ~nonzero] = 0.0
 
-        if laplacian.shape[0] > _SPARSE_MATRIX_THRESHOLD:
-            sparse = scipy.sparse.csr_matrix(laplacian)
-            values, _ = eigsh(sparse, k=2, which="SM")
-            lambda_2: float = float(np.sort(values)[1])
-        else:
-            values = np.linalg.eigvalsh(laplacian)
-            lambda_2 = float(values[1])
+        # The configured window is small (30 by default), so NumPy's dense
+        # symmetric solver is simpler and faster than maintaining a separate
+        # sparse dependency/path.
+        values = np.linalg.eigvalsh(laplacian)
+        lambda_2: float = max(float(values[1]), 0.0)
 
         self.eigenvalues.append(lambda_2)
         return lambda_2
@@ -131,6 +125,12 @@ class AdaptiveValleyDetector:
                 computed; at 5 Hz the default spans about one minute.
             warmup: Minimum samples before the detector may fire.
         """
+        if k <= 0.0:
+            raise ValueError("k must be positive")
+        if history < 2:
+            raise ValueError("history must be at least 2")
+        if warmup < 2 or warmup > history:
+            raise ValueError("warmup must lie in [2, history]")
         self._k: float = k
         self._values: deque[float] = deque(maxlen=history)
         self._warmup: int = warmup
@@ -139,6 +139,8 @@ class AdaptiveValleyDetector:
         self._min_value: float = float("inf")
         self._min_index: int = 0
         self._sample_index: int = -1
+        self.last_latency_samples: int | None = None
+        self.latencies: list[int] = []
 
     def _delta(self) -> float:
         if len(self._values) < self._warmup:
@@ -146,6 +148,11 @@ class AdaptiveValleyDetector:
         values: np.ndarray = np.array(self._values, dtype=np.float64)
         mad: float = float(np.median(np.abs(values - np.median(values))))
         return max(self._k * _MAD_TO_STD * mad, 1e-6)
+
+    @property
+    def warmup(self) -> int:
+        """Minimum number of lambda_2 samples required before a detection."""
+        return self._warmup
 
     def step(self, lambda_2: float) -> int | None:
         """Feed one lambda_2 sample.
@@ -175,5 +182,7 @@ class AdaptiveValleyDetector:
         if lambda_2 > self._min_value + delta:
             self._look_for_max = True
             self._max_value = lambda_2
+            self.last_latency_samples = self._sample_index - self._min_index
+            self.latencies.append(self.last_latency_samples)
             return self._min_index
         return None

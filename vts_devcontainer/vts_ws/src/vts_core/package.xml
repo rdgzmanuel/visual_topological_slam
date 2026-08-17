@@ -3,7 +3,7 @@
 <package format="3">
   <name>vts_core</name>
   <version>1.0.0</version>
-  <description>Dataset-agnostic core algorithms for visual topological SLAM.</description>
+  <description>Dataset-agnostic core algorithms for visual topological mapping.</description>
   <maintainer email="manuelrodriguez@alu.comillas.edu">Manuel Rodriguez Villegas</maintainer>
   <license>MIT</license>
 

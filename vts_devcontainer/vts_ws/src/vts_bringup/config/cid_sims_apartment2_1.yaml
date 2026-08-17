@@ -1,0 +1,38 @@
+# CID-SIMS Apartment 2, traversal 1. Mapping parameters are identical to
+# COLD and the other CID-SIMS scenes; only input and output paths differ.
+player_executable: "cid_sims_player"
+
+player:
+  dataset_root: "/workspace/encoder"
+  sequences:
+    - "apartment2_1"
+  color_subdir: "color"
+  ground_truth_file: "groundtruth.txt"
+  odometry_file: "odom.txt"
+  frame_stride: 6
+  max_ground_truth_gap_s: 0.1
+  max_odometry_gap_s: 0.2
+  publish_rate_hz: 20.0
+  inter_sequence_pause_s: 2.0
+  odometry_uncertainty: [0.025, 0.005, 0.01, 0.0025]
+
+mapping:
+  window_size: 30
+  valley_k: 2.0
+  visual_outlier_k: 2.0
+  gate_mode: "both"
+  naive_threshold: 0.7
+  # Final method; GTSAM is evaluated separately as an ablation.
+  optimize: false
+  dino_model: "dinov2_vits14"
+  use_ground_truth: true
+  output_dir: "output/revised/cid_sims_apartment2_1"
+  run_name: "cid_sims_apartment2_1"
+
+language:
+  graph_path: "output/revised/cid_sims_apartment2_1/final_graph.pkl"
+  semantic_model: "openai/clip-vit-base-patch32"
+  mode: "manual"
+  query_sentence: "Go to the kitchen."
+  top_k: 3
+  output_dir: "output/revised/cid_sims_apartment2_1/commands"

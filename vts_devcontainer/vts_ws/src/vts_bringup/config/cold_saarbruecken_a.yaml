@@ -7,32 +7,32 @@ player:
     - "cold-saarbruecken_part_a_seq2_night2"
   images_subdir: "std_cam"
   labels_subpath: "localization/places.lst"   # relative to each sequence dir
+  odometry_subpath: "odom_scans/odom.tdf"
+  max_odometry_gap_s: 1.0
   publish_rate_hz: 5.0
   inter_sequence_pause_s: 5.0
-  odom_seed: 17
-  # Odometry motion-model noise coefficients (alpha1..4); zero disables drift.
-  alpha: [0.025, 0.005, 0.01, 0.0025] # odometry motion-model noise (alpha1..4)
+  # Fixed motion-model coefficients used only to propagate uncertainty over
+  # the recorded wheel odometry; the measured trajectory is never perturbed.
+  odometry_uncertainty: [0.025, 0.005, 0.01, 0.0025]
 
 mapping:
   # Fixed hyperparameter set shared by ALL environments (no per-environment
-  # tuning): valley_k / visual_outlier_k / merge_radius = 2.0 / 2.0 / 2.0.
+  # tuning): valley_k / visual_outlier_k = 2.0 / 2.0.
   window_size: 30
   valley_k: 2.0              # node-creation sensitivity (lower = more, finer-grained nodes)
-  merge_radius: 2.0          # radius (m) of the geometric gate; larger = more merges, fewer nodes
   visual_outlier_k: 2.0      # visual revisit strictness (MAD multiplier); lower = more merges / loop closures
   gate_mode: "both"          # revisit-gate ablation: both|visual|geometric|threshold (CLI: gate_mode:=...)
   naive_threshold: 0.7       # absolute similarity threshold for the "threshold" ablation baseline
-  optimize: true             # end-of-run SE(2) pose-graph optimization (pre-opt graph also saved)
-  extractor: "finetuned:src"  # fine-tuned DINO encoder; "dinov2" for the stock backbone
-  model_name: "visual_encoder_dino_contrastive_dim128_best"  # .pth name in <encoder_path>/models, or absolute path
-  encoder_path: "/workspace/encoder"  # encoder repo root (contains src/ and models/)
-  output_dir: "output/saarbruecken_a"
+  optimize: false            # final method; GTSAM retained only as an ablation
+  dino_model: "dinov2_vits14" # frozen stock backbone; no training/checkpoint
+  use_ground_truth: true      # synchronized evaluation metadata; never used to map
+  output_dir: "output/revised/saarbruecken_a"
   run_name: "saarbruecken_a"
 
 language:
-  graph_path: "output/saarbruecken_a/final_graph.pkl"
+  graph_path: "output/revised/saarbruecken_a/graph_0_noopt.pkl"
   semantic_model: "openai/clip-vit-base-patch32"
   mode: "manual"             # "manual" (one-shot query_sentence) or "topic" (live /language/command)
   query_sentence: "corridor"
   top_k: 3
-  output_dir: "output/saarbruecken_a/commands"
+  output_dir: "output/revised/saarbruecken_a/commands"

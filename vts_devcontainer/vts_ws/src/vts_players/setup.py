@@ -14,11 +14,12 @@ setup(
     zip_safe=True,
     maintainer="Manuel Rodriguez Villegas",
     maintainer_email="manuelrodriguez@alu.comillas.edu",
-    description="Dataset player nodes (COLD adapter). The only dataset-aware code.",
+    description="Dataset adapters for COLD and CID-SIMS.",
     license="MIT",
     entry_points={
         "console_scripts": [
             "cold_player = vts_players.cold_player_node:main",
+            "cid_sims_player = vts_players.cid_sims_player_node:main",
         ],
     },
 )
