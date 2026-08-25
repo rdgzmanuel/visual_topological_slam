@@ -369,6 +369,37 @@ def descriptor_separation(graph: TopoGraph) -> dict[str, float]:
     }
 
 
+def directional_model_statistics(
+    graph: TopoGraph,
+) -> dict[str, float | int]:
+    """Summarize the fitted hyperspherical uncertainty of map nodes."""
+    nodes = [
+        node
+        for node in graph.nodes.values()
+        if getattr(node, "visual_sample_count", 0) > 0
+    ]
+    if not nodes:
+        return {}
+    resultant_lengths = np.asarray(
+        [node.visual_resultant_length for node in nodes], dtype=np.float64
+    )
+    concentrations = np.asarray(
+        [node.visual_concentration for node in nodes], dtype=np.float64
+    )
+    sample_counts = np.asarray(
+        [node.visual_sample_count for node in nodes], dtype=np.float64
+    )
+    return {
+        "n_fitted_nodes": len(nodes),
+        "mean_resultant_length": round(float(np.mean(resultant_lengths)), 4),
+        "median_resultant_length": round(float(np.median(resultant_lengths)), 4),
+        "min_resultant_length": round(float(np.min(resultant_lengths)), 4),
+        "max_resultant_length": round(float(np.max(resultant_lengths)), 4),
+        "median_concentration": round(float(np.median(concentrations)), 4),
+        "median_segment_frames": round(float(np.median(sample_counts)), 1),
+    }
+
+
 def map_footprint(graph: TopoGraph) -> dict[str, float]:
     """Full and descriptors-only map footprint.
 
@@ -385,7 +416,7 @@ def map_footprint(graph: TopoGraph) -> dict[str, float]:
 
     descriptor_bytes: int = 0
     view_bytes: int = 0
-    descriptors_only: dict[int, np.ndarray] = {}
+    descriptors_only: dict[int, dict[str, object]] = {}
     for node_id, node in graph.nodes.items():
         features: np.ndarray = np.asarray(node.visual_features)
         descriptor_bytes += int(features.nbytes)
@@ -395,7 +426,18 @@ def map_footprint(graph: TopoGraph) -> dict[str, float]:
             descriptor_bytes += int(compact_features.nbytes)
         else:
             compact_features = features.astype(np.float32)[None, :]
-        descriptors_only[node_id] = compact_features
+        # ``compact_features`` already contains the stored visual directions;
+        # avoid duplicating the mean direction in this diagnostic payload.
+        descriptors_only[node_id] = {
+            "view_features": compact_features,
+            "concentration": float(
+                getattr(node, "visual_concentration", 0.0)
+            ),
+            "mean_resultant_length": float(
+                getattr(node, "visual_resultant_length", 0.0)
+            ),
+            "sample_count": int(getattr(node, "visual_sample_count", 0)),
+        }
         for view in node.views:
             if view is not None:
                 view_bytes += int(np.asarray(view).nbytes)
@@ -517,7 +559,7 @@ def retrieval_metrics(
     hits_1: int = 0
     hits_k: int = 0
     reciprocal_ranks: list[float] = []
-    for ranks, truth in zip(ranked_labels, true_labels):
+    for ranks, truth in zip(ranked_labels, true_labels, strict=True):
         if ranks and ranks[0] == truth:
             hits_1 += 1
         if truth in ranks[:k]:
@@ -569,7 +611,7 @@ def retrieval_report(
 
     correct_top1: list[bool] = [
         bool(ranks and ranks[0] == truth)
-        for ranks, truth in zip(ranked_labels, true_labels)
+        for ranks, truth in zip(ranked_labels, true_labels, strict=True)
     ]
 
     # Per ground-truth class: recall@1 and support.
@@ -585,7 +627,7 @@ def retrieval_report(
 
     # Confusion: true label -> predicted top-1 label counts.
     confusion: dict[str, dict[str, int]] = {label: {} for label in classes}
-    for ranks, truth in zip(ranked_labels, true_labels):
+    for ranks, truth in zip(ranked_labels, true_labels, strict=True):
         predicted: str = ranks[0] if ranks else "?"
         confusion[truth][predicted] = confusion[truth].get(predicted, 0) + 1
 

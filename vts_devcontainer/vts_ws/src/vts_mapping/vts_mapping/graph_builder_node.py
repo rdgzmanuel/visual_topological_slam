@@ -27,11 +27,11 @@ from contextlib import suppress
 
 import numpy as np
 import rclpy
-from rclpy.executors import ExternalShutdownException
 from cv_bridge import CvBridge
 from geometry_msgs.msg import PoseStamped
 from message_filters import ApproximateTimeSynchronizer, Subscriber
 from nav_msgs.msg import Odometry
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from sensor_msgs.msg import Image
 from std_msgs.msg import Empty, String
@@ -60,7 +60,11 @@ class GraphBuilderNode(Node):
         self.declare_parameter("optimizer_backend", "gtsam")
         self.declare_parameter("gate_mode", "both")
         self.declare_parameter("naive_threshold", 0.7)
+        self.declare_parameter("visual_model", "vmf")
         self.declare_parameter("dino_model", "dinov2_vits14")
+        self.declare_parameter("dino_device", "auto")
+        self.declare_parameter("feature_backend", "dino_cls")
+        self.declare_parameter("dino_layer", -1)
         self.declare_parameter("use_ground_truth", False)
         self.declare_parameter("output_dir", "output/graphs")
         self.declare_parameter("run_name", "run")
@@ -92,9 +96,22 @@ class GraphBuilderNode(Node):
         self._naive_threshold: float = (
             self.get_parameter("naive_threshold").get_parameter_value().double_value
         )
+        self._visual_model = str(self.get_parameter("visual_model").value)
         dino_model: str = (
             self.get_parameter("dino_model").get_parameter_value().string_value
         )
+        dino_device: str = (
+            self.get_parameter("dino_device").get_parameter_value().string_value
+        )
+        feature_backend: str = (
+            self.get_parameter("feature_backend").get_parameter_value().string_value
+        )
+        dino_layer: int = (
+            self.get_parameter("dino_layer").get_parameter_value().integer_value
+        )
+        self._feature_backend = feature_backend
+        self._dino_model = dino_model
+        self._dino_layer = dino_layer
         self._use_ground_truth: bool = (
             self.get_parameter("use_ground_truth").get_parameter_value().bool_value
         )
@@ -111,8 +128,18 @@ class GraphBuilderNode(Node):
         os.makedirs(self._output_dir, exist_ok=True)
 
         extractor_start: float = time.perf_counter()
-        self._extractor: FeatureExtractor = build_extractor(dino_model)
+        self._extractor: FeatureExtractor = build_extractor(
+            dino_model,
+            device=dino_device,
+            backend=feature_backend,
+            layer=dino_layer,
+        )
         self._extractor_init_s: float = time.perf_counter() - extractor_start
+        self.get_logger().info(
+            f"Visual descriptor: {feature_backend}, model={dino_model}, "
+            f"layer={dino_layer}, device={self._extractor.device} "
+            f"(requested: {dino_device})"
+        )
         self._bridge: CvBridge = CvBridge()
 
         self._sequence_index: int = 0
@@ -168,6 +195,7 @@ class GraphBuilderNode(Node):
             optimizer_backend=self._optimizer_backend,
             gate_mode=self._gate_mode,
             naive_threshold=self._naive_threshold,
+            visual_model=self._visual_model,
             frame_id=f"{self._run_name}_seq{self._sequence_index}",
         )
 
@@ -299,6 +327,10 @@ class GraphBuilderNode(Node):
             1000.0 * self._extraction_time_s / max(self._processed, 1)
         )
         perf["encoder_initialization_s"] = self._extractor_init_s
+        perf["feature_backend"] = self._feature_backend
+        perf["dino_model"] = self._dino_model
+        perf["dino_layer"] = self._dino_layer
+        perf["visual_model"] = self._visual_model
         perf["end_to_end_time_ms_per_frame"] = (
             perf["encoder_time_ms_per_frame"] + perf["map_update_time_ms"]
         )

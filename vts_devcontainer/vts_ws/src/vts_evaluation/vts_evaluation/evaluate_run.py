@@ -29,14 +29,24 @@ to disk (no ROS required):
 from __future__ import annotations
 
 import argparse
-from contextlib import redirect_stdout
 import json
 import os
 import re
 import sys
 import time
+from contextlib import redirect_stdout
 
 import numpy as np
+
+from vts_core.metrics import (
+    descriptor_separation,
+    directional_model_statistics,
+    graph_metrics,
+    rejection_curve,
+    retrieval_report,
+    trajectory_metrics,
+)
+from vts_core.topo_graph import TopoGraph
 
 # COLD ground-truth poses are encoded in the image filenames. Parsed here with
 # a local regex so the offline evaluator needs neither ROS nor OpenCV (the
@@ -44,15 +54,6 @@ import numpy as np
 _COLD_FILENAME: re.Pattern[str] = re.compile(
     r"_x(?P<x>-?\d+\.?\d*)_y(?P<y>-?\d+\.?\d*)_a(?P<a>-?\d+\.?\d*)"
 )
-
-from vts_core.metrics import (
-    descriptor_separation,
-    graph_metrics,
-    rejection_curve,
-    retrieval_report,
-    trajectory_metrics,
-)
-from vts_core.topo_graph import TopoGraph
 
 
 def _gt_trajectory_from_cold_dir(images_dir: str) -> np.ndarray:
@@ -116,6 +117,15 @@ def main() -> None:
         "--floorplan",
         default="",
         help="Floorplan image to overlay the map on (needs a <floorplan>.calib.json)",
+    )
+    parser.add_argument(
+        "--floorplan-viz-path",
+        default="",
+        help=(
+            "Output path for the calibrated floorplan overlay. Defaults to "
+            "<graph_dir>/images/<stem>_on_floorplan.png; use a .pdf path for "
+            "a publication figure."
+        ),
     )
     parser.add_argument(
         "--no-viz", action="store_true", help="Disable the map images"
@@ -188,6 +198,11 @@ def main() -> None:
     separation: dict[str, float] = descriptor_separation(graph)
     if separation:
         report["descriptors"] = separation
+    directional_stats: dict[str, float | int] = (
+        directional_model_statistics(graph)
+    )
+    if directional_stats:
+        report["directional_visual_model"] = directional_stats
 
     if not args.no_viz:
         from vts_evaluation.map_viz import render_map, render_on_floorplan
@@ -206,9 +221,11 @@ def main() -> None:
         report["map_image"] = viz_path
 
         if args.floorplan and node_gt is not None:
-            overlay_path: str = os.path.join(
-                images_dir, f"{stem}_on_floorplan.png"
+            overlay_path: str = args.floorplan_viz_path or os.path.join(
+                images_dir, f"{stem}_on_floorplan.png",
             )
+            overlay_dir: str = os.path.dirname(os.path.abspath(overlay_path))
+            os.makedirs(overlay_dir, exist_ok=True)
             with redirect_stdout(sys.stderr):
                 rendered = render_on_floorplan(
                     graph, args.floorplan, overlay_path,
@@ -264,7 +281,8 @@ def main() -> None:
         )
         if args.report_rejection:
             correct_top1 = [
-                bool(r and r[0] == t) for r, t in zip(ranked_labels, true_labels)
+                bool(r and r[0] == t)
+                for r, t in zip(ranked_labels, true_labels, strict=True)
             ]
             report["retrieval"]["rejection_curve"] = rejection_curve(
                 correct_top1, margins

@@ -19,17 +19,18 @@ def _frame(x: float, descriptor: np.ndarray) -> FrameRecord:
 class MapperOdometryTest(unittest.TestCase):
     def test_confirmed_valley_splits_at_original_boundary(self) -> None:
         class Monitor:
-            eigenvalues = []
+            def __init__(self) -> None:
+                self.eigenvalues: list[float] = []
 
             def update(self, descriptor):
                 return 0.5
 
         class Detector:
             warmup = 0
-            latencies = []
 
-            def __init__(self):
+            def __init__(self) -> None:
                 self.calls = 0
+                self.latencies: list[int] = []
 
             def step(self, value):
                 self.calls += 1

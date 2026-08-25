@@ -168,7 +168,14 @@ class CidSimsPlayerNode(Node):
         self._frame_index += 1
         image = cv2.imread(path, cv2.IMREAD_COLOR)
         if image is None:
-            raise RuntimeError(f"Unreadable CID-SIMS image: {path}")
+            status = os.stat(path)
+            cloud_hint = (
+                " The file occupies no local disk blocks; download it from "
+                "cloud storage or mark the dataset as always available offline."
+                if getattr(status, "st_blocks", 1) == 0
+                else ""
+            )
+            raise RuntimeError(f"Unreadable CID-SIMS image: {path}.{cloud_hint}")
 
         stamp = self.get_clock().now().to_msg()
         self._waiting_for_frame_ack = True

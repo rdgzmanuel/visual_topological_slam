@@ -43,6 +43,12 @@ class TopoNode:
         node_id: Unique identifier within one graph.
         pose: (x, y, theta) in the odometry frame of the run that created it.
         visual_features: L2-normalized place-recognition descriptor.
+        visual_concentration: Concentration of the vMF distribution fitted to
+            every descriptor in the node segment. Zero means that directional
+            confidence could not be estimated.
+        visual_resultant_length: Mean resultant length in [0, 1], retained as
+            an interpretable, dimension-independent concentration diagnostic.
+        visual_sample_count: Number of segment descriptors used by the fit.
         view_features: Up to ``MAX_VIEWS`` L2-normalized visual descriptors,
             one per representative view. This small matrix supports robust
             multi-view place matching without retaining every frame.
@@ -69,6 +75,9 @@ class TopoNode:
     node_id: int
     pose: Pose2D
     visual_features: np.ndarray
+    visual_concentration: float = 0.0
+    visual_resultant_length: float = 0.0
+    visual_sample_count: int = 0
     views: list[np.ndarray] = field(default_factory=list)
     view_features: np.ndarray | None = None
     view_embeddings: np.ndarray | None = None
@@ -289,7 +298,7 @@ class TopoGraph:
             pickle.dump(self, f, protocol=pickle.HIGHEST_PROTOCOL)
 
     @staticmethod
-    def load(path: str) -> "TopoGraph":
+    def load(path: str) -> TopoGraph:
         """Load a pickled graph from disk."""
         with open(path, "rb") as f:
             graph: TopoGraph = pickle.load(f)
@@ -310,4 +319,10 @@ class TopoGraph:
                 node.extent_covariance = np.zeros((2, 2), dtype=np.float64)
             if not hasattr(node, "view_features"):
                 node.view_features = None
+            if not hasattr(node, "visual_concentration"):
+                node.visual_concentration = 0.0
+            if not hasattr(node, "visual_resultant_length"):
+                node.visual_resultant_length = 0.0
+            if not hasattr(node, "visual_sample_count"):
+                node.visual_sample_count = 0
         return graph

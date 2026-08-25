@@ -17,8 +17,8 @@ from pathlib import Path
 import numpy as np
 
 from vts_core.matching import fit_se2
-from vts_players.cold_odometry import load_cold_odometry
 from vts_players.cid_sims_data import load_ground_truth, load_wheel_odometry
+from vts_players.cold_odometry import load_cold_odometry
 
 _FRAME = re.compile(
     r"t(?P<t>\d+\.\d+)_x(?P<x>-?\d+\.?\d*)_y(?P<y>-?\d+\.?\d*)"

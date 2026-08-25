@@ -125,7 +125,8 @@ def _optimize_numpy(
     iterations = 0
     # Exact gauge fixing: remove the first pose's rows/columns from the solve.
     free = slice(3, 3 * n)
-    for iterations in range(1, max_iterations + 1):
+    for iteration in range(1, max_iterations + 1):
+        iterations = iteration
         current_error, hessian, gradient = terms(state)
         reduced_hessian = hessian[free, free] + np.eye(3 * (n - 1)) * _DAMPING
         try:

@@ -16,6 +16,7 @@ setup(
     maintainer_email="manuelrodriguez@alu.comillas.edu",
     description="Offline evaluation metrics CLI.",
     license="MIT",
+    python_requires=">=3.12,<3.13",
     entry_points={
         "console_scripts": [
             "evaluate_run = vts_evaluation.evaluate_run:main",

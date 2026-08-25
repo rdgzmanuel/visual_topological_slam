@@ -33,8 +33,8 @@ from contextlib import suppress
 
 import cv2
 import rclpy
-from PIL import Image
 from geometry_msgs.msg import Pose2D
+from PIL import Image
 from rclpy.node import Node
 from std_msgs.msg import String
 

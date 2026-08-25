@@ -16,6 +16,7 @@ setup(
     maintainer_email="manuelrodriguez@alu.comillas.edu",
     description="Natural-language place retrieval node.",
     license="MIT",
+    python_requires=">=3.12,<3.13",
     entry_points={
         "console_scripts": [
             "commands = vts_language.commands_node:main",

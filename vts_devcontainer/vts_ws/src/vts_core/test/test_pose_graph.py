@@ -1,5 +1,5 @@
-import unittest
 import importlib.util
+import unittest
 
 import numpy as np
 

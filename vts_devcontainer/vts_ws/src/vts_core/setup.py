@@ -16,6 +16,7 @@ setup(
     maintainer_email="manuelrodriguez@alu.comillas.edu",
     description="Dataset-agnostic core algorithms for visual topological mapping.",
     license="MIT",
+    python_requires=">=3.12,<3.13",
     entry_points={
         "console_scripts": [
         ],

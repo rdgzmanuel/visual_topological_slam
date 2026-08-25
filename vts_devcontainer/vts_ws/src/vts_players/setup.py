@@ -16,6 +16,7 @@ setup(
     maintainer_email="manuelrodriguez@alu.comillas.edu",
     description="Dataset adapters for COLD and CID-SIMS.",
     license="MIT",
+    python_requires=">=3.12,<3.13",
     entry_points={
         "console_scripts": [
             "cold_player = vts_players.cold_player_node:main",

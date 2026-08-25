@@ -1,9 +1,9 @@
 # GitHub Pages configuration (Deploy from a branch: main, / root).
 # Jekyll renders README.md as the site index via jekyll-readme-index.
-title: LANTERN
+title: TopoSIGMA
 description: >-
-  LANguage Topological Environment Representation and Navigation — visual
-  topological mapping with secondary text-to-node retrieval.
+  Topological Spectral Information-Geometric Mapping Architecture — online,
+  training-free visual topological mapping for ROS 2.
 theme: jekyll-theme-primer
 
 # Only the README and its images belong on the site; keep source code,

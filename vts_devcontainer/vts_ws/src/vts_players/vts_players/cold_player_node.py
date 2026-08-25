@@ -266,7 +266,7 @@ class ColdPlayerNode(Node):
             self._announce_sequence_done()
             return
 
-        timestamp, gt_pose, path, odom_pose, covariance = self._frames[
+        _timestamp, gt_pose, path, odom_pose, covariance = self._frames[
             self._frame_index
         ]
         self._frame_index += 1

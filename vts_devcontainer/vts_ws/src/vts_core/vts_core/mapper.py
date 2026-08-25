@@ -12,8 +12,9 @@ Design (deliberately simplified to a single, reliable run):
   and the final segment is flushed explicitly at end-of-run.
 - Revisit / loop closure: interval-relative odometry uncertainty generates and
   ranks non-local candidates first. A unique compatible place is accepted
-  directly; when odometry is ambiguous, a bidirectional three-node visual
-  sequence disambiguates candidates traversed in either direction.
+  directly; when odometry is ambiguous, a bidirectional three-node sequence
+  compares training-free von Mises--Fisher place distributions traversed in
+  either direction.
 - Every emitted keyframe remains a distinct pose variable. Sequential motion
   creates an odometry factor; an accepted revisit creates a separate
   probabilistic co-location factor. Live odometry and covariance are never
@@ -25,10 +26,12 @@ Design (deliberately simplified to a single, reliable run):
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import numpy as np
 
+from vts_core.directional import fit_von_mises_fisher, vmf_log_overlap_ratio
 from vts_core.matching import gaussian_position_nll, mahalanobis_gate
 from vts_core.node_detection import AdaptiveValleyDetector, ConnectivityMonitor
 from vts_core.pose_graph import OptimizationResult, optimize_se2
@@ -45,8 +48,8 @@ from vts_core.topo_graph import (
 _MIN_EDGE_SIGMA: float = 0.05
 _PLACE_LOCALIZATION_SIGMA: float = 0.5
 
-# Visual revisit gate. A loop closure is accepted only if the candidate's
-# multi-view similarity is a robust *outlier* among candidates that remain
+# Visual revisit gate. A loop closure is accepted only if the candidate's vMF
+# overlap evidence is a robust *outlier* among candidates that remain
 # plausible after the independent context/geometric checks: at least the
 # median plus k robust standard deviations
 # (k * 1.4826 * MAD), with k the default below (tunable per run via the
@@ -67,6 +70,7 @@ _MIN_NODES_FOR_REVISIT: int = 5
 # each; "threshold" replaces the whole dual gate with a naive absolute
 # cosine-similarity threshold — the baseline the dual gate is argued against.
 GATE_MODES: tuple[str, ...] = ("both", "visual", "geometric", "threshold")
+VISUAL_MODELS: tuple[str, ...] = ("vmf", "cosine")
 # Absolute cosine-similarity threshold used by the "threshold" ablation mode.
 _NAIVE_THRESHOLD: float = 0.7
 
@@ -101,6 +105,7 @@ class TopologicalMapper:
         optimizer_backend: str = "gtsam",
         gate_mode: str = "both",
         naive_threshold: float = _NAIVE_THRESHOLD,
+        visual_model: str = "vmf",
     ) -> None:
         """
         Args:
@@ -120,15 +125,23 @@ class TopologicalMapper:
             optimizer_backend: ``gtsam`` for production or ``numpy`` for the
                 dependency-free reference solver.
             gate_mode: Revisit-gate ablation mode, one of :data:`GATE_MODES`.
-                "both" (default) is the full dual gate; "visual" /
-                "geometric" keep only one gate; "threshold" is the naive
-                absolute-similarity baseline.
+                ``both`` (default) is the odometry-first dual gate;
+                ``visual`` / ``geometric`` keep only one gate; ``threshold``
+                is the naive absolute-similarity baseline.
             naive_threshold: Cosine-similarity threshold used when
                 ``gate_mode == "threshold"``.
+            visual_model: Evidence model used to resolve ambiguous geometric
+                candidates: ``vmf`` for the final mapper or ``cosine`` for
+                controlled external descriptor baselines.
         """
         if gate_mode not in GATE_MODES:
             raise ValueError(
                 f"gate_mode must be one of {GATE_MODES}, got {gate_mode!r}"
+            )
+        if visual_model not in VISUAL_MODELS:
+            raise ValueError(
+                f"visual_model must be one of {VISUAL_MODELS}, "
+                f"got {visual_model!r}"
             )
         self.graph: TopoGraph = TopoGraph(frame_id=frame_id)
         self.current_node_id: int | None = None
@@ -137,6 +150,7 @@ class TopologicalMapper:
         self._optimizer_backend: str = optimizer_backend
         self._gate_mode: str = gate_mode
         self._naive_threshold: float = naive_threshold
+        self._visual_model = visual_model
 
         self._monitor: ConnectivityMonitor = ConnectivityMonitor(window_size)
         self._detector: AdaptiveValleyDetector = AdaptiveValleyDetector(k=valley_k)
@@ -404,10 +418,8 @@ class TopologicalMapper:
         if not segment:
             raise ValueError("cannot create a node from an empty segment")
         stacked: np.ndarray = np.stack([frame.descriptor for frame in segment])
-        mean_descriptor: np.ndarray = stacked.mean(axis=0)
-        mean_descriptor = mean_descriptor / max(
-            float(np.linalg.norm(mean_descriptor)), 1e-12
-        )
+        directional_model = fit_von_mises_fisher(stacked)
+        mean_descriptor = directional_model.mean_direction
 
         representative = self._segment_medoid(segment, mean_descriptor)
         positions = np.asarray([frame.pose[:2] for frame in segment], dtype=np.float64)
@@ -419,6 +431,9 @@ class TopologicalMapper:
             node_id=self.graph.new_node_id(),
             pose=representative.pose,
             visual_features=mean_descriptor,
+            visual_concentration=directional_model.concentration,
+            visual_resultant_length=directional_model.mean_resultant_length,
+            visual_sample_count=directional_model.sample_count,
             pose_covariance=representative.covariance[:2, :2].copy(),
             extent_covariance=extent_covariance,
             # Evaluation-only: pin the node's GT to the SAME frame whose pose
@@ -560,6 +575,16 @@ class TopologicalMapper:
                    + np.mean(np.max(pairwise, axis=0)))
         )
 
+    @staticmethod
+    def _node_vmf_evidence(first: TopoNode, second: TopoNode) -> float:
+        """Information-geometric visual evidence between two places."""
+        return vmf_log_overlap_ratio(
+            first.visual_features,
+            first.visual_concentration,
+            second.visual_features,
+            second.visual_concentration,
+        )
+
     def _odometry_step(self, node_id: int, direction: int) -> int | None:
         """Return an adjacent sequential node in ``direction`` if it exists.
 
@@ -576,8 +601,13 @@ class TopologicalMapper:
             return None
         return neighbor
 
-    def _sequence_similarity(self, candidate: TopoNode, matched_id: int) -> float:
-        """Visual agreement of recent observations with a historical place.
+    def _sequence_score(
+        self,
+        candidate: TopoNode,
+        matched_id: int,
+        scorer: Callable[[TopoNode, TopoNode], float],
+    ) -> float:
+        """Agreement of recent observations with a historical place.
 
         The candidate itself is compared with ``matched_id``. Up to two recent
         live nodes are then compared with historical sequential neighbors.
@@ -586,7 +616,7 @@ class TopologicalMapper:
         reverse traversal ``corridor -> door -> room`` without requiring the
         two door-facing images to be near-identical.
         """
-        direct = self._node_similarity(candidate, self.graph.nodes[matched_id])
+        direct = scorer(candidate, self.graph.nodes[matched_id])
         if self.current_node_id is None:
             return direct
 
@@ -608,12 +638,22 @@ class TopologicalMapper:
                 if historical is None:
                     break
                 scores.append(
-                    self._node_similarity(
+                    scorer(
                         self.graph.nodes[live_id], self.graph.nodes[historical]
                     )
                 )
             directional_scores.append(float(np.mean(scores)))
         return max(directional_scores)
+
+    def _sequence_similarity(self, candidate: TopoNode, matched_id: int) -> float:
+        """Bidirectional sequence score using multi-view cosine similarity."""
+        return self._sequence_score(candidate, matched_id, self._node_similarity)
+
+    def _sequence_vmf_evidence(
+        self, candidate: TopoNode, matched_id: int
+    ) -> float:
+        """Bidirectional sequence score using vMF overlap evidence."""
+        return self._sequence_score(candidate, matched_id, self._node_vmf_evidence)
 
     def _revisit_covariance(
         self, candidate: TopoNode, matched: TopoNode
@@ -680,6 +720,18 @@ class TopologicalMapper:
                 return None, proposed_id, proposed_similarity, "rejected_by_gate"
             return proposed_id, proposed_id, proposed_similarity, "accepted"
 
+        sequence_evidence = (
+            np.asarray(
+                [
+                    self._sequence_vmf_evidence(candidate, node_id)
+                    for node_id in eligible_ids
+                ],
+                dtype=np.float64,
+            )
+            if self._visual_model == "vmf"
+            else sequence_similarities
+        )
+
         geometric_candidates: list[tuple[int, float]] = []
         odometry_ranking: list[tuple[int, float]] = []
         for index, node_id in enumerate(eligible_ids):
@@ -698,7 +750,7 @@ class TopologicalMapper:
             if geometric_candidates else odometry_ranking[0][0]
         )
         proposed_id = eligible_ids[proposed_index]
-        proposed_similarity = float(sequence_similarities[proposed_index])
+        proposed_similarity = float(sequence_evidence[proposed_index])
 
         if self._gate_mode == "geometric":
             if not geometric_candidates:
@@ -724,7 +776,7 @@ class TopologicalMapper:
             return (
                 accepted_id,
                 accepted_id,
-                float(sequence_similarities[selected]),
+                float(sequence_evidence[selected]),
                 "accepted",
             )
 
@@ -733,13 +785,13 @@ class TopologicalMapper:
         geometric_indices = [index for index, _nll in geometric_candidates]
         for selected, _nll in geometric_candidates:
             if self._distinctive_within_geometry(
-                sequence_similarities, selected, geometric_indices
+                sequence_evidence, selected, geometric_indices
             ):
                 accepted_id = eligible_ids[selected]
                 return (
                     accepted_id,
                     accepted_id,
-                    float(sequence_similarities[selected]),
+                    float(sequence_evidence[selected]),
                     "accepted",
                 )
         return None, proposed_id, proposed_similarity, "rejected_by_gate"

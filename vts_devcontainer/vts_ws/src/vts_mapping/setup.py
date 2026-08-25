@@ -16,6 +16,7 @@ setup(
     maintainer_email="manuelrodriguez@alu.comillas.edu",
     description="Topological graph building node.",
     license="MIT",
+    python_requires=">=3.12,<3.13",
     entry_points={
         "console_scripts": [
             "graph_builder = vts_mapping.graph_builder_node:main",

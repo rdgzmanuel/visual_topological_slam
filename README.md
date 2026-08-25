@@ -1,106 +1,269 @@
-# Visual topological mapping with text-to-node retrieval
+# TopoSIGMA
 
-This repository contains a focused ROS 2 Humble pipeline that builds a
-visual topological map from standard camera and odometry topics. It uses a
-frozen, stock DINOv2 backbone: there is no training split, hard-negative
-mining, fine-tuned checkpoint, or dataset-specific model state.
+**Topo**logical **S**pectral **I**nformation-**G**eometric **M**apping **A**rchitecture
 
-The mapping contribution consists of:
+TopoSIGMA is an online, training-free visual topological mapping system for
+ROS 2. It turns synchronized camera and wheel-odometry streams into a compact
+place graph while treating node formation and loop closure as separate
+inference problems.
 
-- spectral key-node detection over nonnegative visual affinities;
-- odometry-first loop candidates, with bidirectional visual sequences used
-  only to resolve geometrically ambiguous revisits, plus CLI-selectable
-  ablations;
-- timestamp-synchronized recorded wheel odometry with modeled uncertainty;
-- distinct pose variables connected by uncertain odometry and loop factors;
-- distinct observation poses without pose snapping or covariance reset;
-- an optional GTSAM pose-graph ablation, disabled in the final method because
-  it did not improve placement accuracy;
-- loop-closure precision, recall and F1 evaluated separately from sequential
-  edges.
+![TopoSIGMA pipeline](assets/readme/toposigma_pipeline.png)
 
-Text-to-node retrieval is retained as a secondary feature. Representative
-views stored at each node are indexed with CLIP and queried with text.
+The system uses a frozen DINOv2 encoder and contains no learned
+dataset-specific state. Algebraic connectivity in a sliding visual graph
+identifies place transitions. For each completed segment, all normalized frame
+descriptors are fitted with a von Mises--Fisher (vMF) distribution. Loop
+closure is geometry-first: propagated odometry covariance supplies physically
+compatible candidates, and bidirectional vMF sequence evidence is used only
+when several candidates remain.
 
-## Repository layout
+An optional CLIP module supports open-vocabulary text-to-node retrieval after
+the map has been built. It does not influence node creation or loop closure.
+
+## Highlights
+
+- Online node extraction from valleys of spectral algebraic connectivity.
+- Covariance-aware loop-candidate search using Mahalanobis compatibility.
+- Training-free directional node models that preserve appearance dispersion.
+- Separate sequential and loop edges, with explicit loop-closure metrics.
+- Dataset-independent mapping core and ROS topic interface.
+- Reproducible COLD and CID-SIMS experiment runners with resumable ablations.
+- Optional AnyLoc-GeM comparison and CLIP text-to-node retrieval.
+
+![Directional node model](assets/readme/directional_node_model.png)
+
+## Repository structure
 
 ```text
-encoder/seq_data/              Raw COLD sequences used by the current player
-vts_devcontainer/              ROS 2 development container
-  vts_ws/src/vts_core/         Dataset-independent algorithms and metrics
-  vts_ws/src/vts_players/      Dataset adapters (COLD and CID-SIMS)
-  vts_ws/src/vts_mapping/      ROS graph-builder node
-  vts_ws/src/vts_language/     Text-to-node retrieval node
-  vts_ws/src/vts_evaluation/   Offline evaluation tools
-  vts_ws/src/vts_bringup/      Launch file and experiment configurations
+.
+├── assets/readme/                  README figures
+├── docs/                           Baseline and ablation notes
+├── encoder/                        Local datasets (ignored by Git)
+└── vts_devcontainer/
+    ├── .devcontainer/              Ubuntu 24.04 / ROS 2 Jazzy environment
+    ├── pyproject.toml               Python dependency declaration
+    ├── uv.lock                      Reproducible dependency lock
+    └── vts_ws/
+        ├── run_experiments.sh       COLD experiment suite
+        ├── run_cid_sims_experiments.sh
+        ├── run_anyloc_baseline.sh
+        └── src/
+            ├── vts_core/            Dataset-independent algorithms
+            ├── vts_players/         COLD and CID-SIMS adapters
+            ├── vts_mapping/         ROS graph-builder node
+            ├── vts_language/        Text-to-node retrieval node
+            ├── vts_evaluation/      Metrics and publication figures
+            └── vts_bringup/         Launch file and experiment configs
 ```
 
-The mapper itself is dataset-agnostic. A new dataset or robot only needs to
-publish the topic contract documented in
-`vts_devcontainer/vts_ws/src/README.md`. CID-SIMS provides the independent
-dataset evaluation without changing the mapper or its parameters.
+The package-level architecture and ROS interface are documented in
+[`vts_devcontainer/vts_ws/src/README.md`](vts_devcontainer/vts_ws/src/README.md).
 
-## Build and run
+## Requirements
 
-Open the repository in its devcontainer, then run:
+The supported environment is the included development container:
 
-```bash
-cd /workspaces/visual_topological_slam/vts_devcontainer/vts_ws
-colcon build --symlink-install
-source install/setup.bash
+- Docker Desktop or Docker Engine;
+- a development-container client such as Visual Studio Code with the
+  Dev Containers extension;
+- enough disk space for the selected datasets and model cache.
 
-# One mapping run
-ros2 launch vts_bringup pipeline.launch.py \
-  config:=cold_freiburg_a.yaml mode:=building
+The image uses Ubuntu 24.04, ROS 2 Jazzy, CPython 3.12, and dependencies locked
+with uv. ROS 2 Jazzy's binary Python extensions require the Ubuntu 24.04 Python
+ABI, so the container intentionally does not install a separate Python 3.13
+interpreter.
 
-# Complete fixed-parameter suite and gate ablations
-./run_experiments.sh
+## Dataset setup
+
+The datasets are not redistributed. Download them under `encoder/`, which is
+mounted at `/workspace/encoder` inside the container.
+
+### COLD
+
+Download the Freiburg and Saarbruecken sequences from the
+[COsy Localization Database](https://www.cas.kth.se/COLD/). The supplied
+configurations use these four traversals:
+
+```text
+encoder/seq_data/
+├── cold-freiburg_part_a_seq2_night1/
+├── cold-freiburg_part_b_seq3_sunny1/
+├── cold-saarbruecken_part_a_seq2_night2/
+└── cold-saarbruecken_part_b_seq4_sunny1/
 ```
+
+Each extracted traversal must retain the original `std_cam/`, `odom_scans/`,
+and `localization/` directories.
 
 ### CID-SIMS
 
-Download CID-SIMS from its official DOI
-(`10.57760/sciencedb.ai.00003`) and extract the first traversal from each of
-the three apartment scenes:
+Download CID-SIMS from
+[Science Data Bank](https://doi.org/10.57760/sciencedb.ai.00003) and extract
+the first traversal from each apartment as follows:
 
 ```text
 encoder/
-├── apartment1_1/groundtruth.txt
-├── apartment2_1/groundtruth.txt
-└── apartment3_1/groundtruth.txt
+├── apartment1_1/
+│   ├── color/
+│   ├── groundtruth.txt
+│   └── odom.txt
+├── apartment2_1/
+└── apartment3_1/
 ```
 
-Then run the three independent-scene experiments:
+The CID-SIMS runner validates the expected files, image availability, and
+freshness of generated graphs before accepting a run.
+
+## Build
+
+Open `vts_devcontainer/` in the development container, then run:
 
 ```bash
-./run_cid_sims_experiments.sh
+cd /workspaces/visual_topological_slam/vts_devcontainer/vts_ws
 
-# After the main result is validated, include all gate ablations:
-RUN_ABLATIONS=1 ./run_cid_sims_experiments.sh
+colcon build --symlink-install \
+  --packages-select vts_core vts_players vts_mapping \
+  vts_evaluation vts_bringup vts_language
+
+source install/setup.bash
 ```
 
-CID-SIMS has no room-level text annotations, so this suite evaluates mapping,
-loop closures, odometry, storage and runtime but does not fabricate a language
-benchmark from its object-segmentation masks.
+The first mapping run downloads the selected pretrained model through
+PyTorch Hub or Hugging Face and caches it inside the container user's home
+directory.
 
-Fresh outputs are written below `output/revised/`, deliberately separate from
-graphs produced by the previous implementation. Use `FORCE=1
-./run_experiments.sh` to rerun even when all source inputs are older than an
-existing result. Use `SKIP_EXISTING=1 ./run_experiments.sh` to resume after a
-runner-only fix without rebuilding completed graphs.
+## Run TopoSIGMA
 
-The experiment runner creates, for each environment:
+Build one COLD map:
 
-- `final_graph.pkl` and `graph_0_noopt.pkl`;
-- `metrics_report.json` and `noopt_report.json`;
-- `graph_0_performance.json`, including DINOv2 inference time;
-- visual-only, geometric-only, and threshold-baseline ablation reports.
-- publication-size PDF maps, lambda₂ traces, and recorded-odometry plots in
-  each main run's `figures/` directory.
+```bash
+ros2 launch vts_bringup pipeline.launch.py \
+  config:=cold_freiburg_a.yaml mode:=building
+```
 
-At the end, `output/revised/summary.json` aggregates everything and the same
-directory receives `mapping.csv`, `gate_ablation.csv`, `retrieval.csv`, and
-`runtime.csv` for direct use when revising the paper.
+Query the completed map with the sentence configured in the same YAML file:
 
-The paper is intentionally updated only after these revised experiments have
-completed.
+```bash
+ros2 launch vts_bringup pipeline.launch.py \
+  config:=cold_freiburg_a.yaml mode:=command
+```
+
+Environment-specific inputs and output paths live in
+`vts_bringup/config/*.yaml`; the mapping algorithms do not access datasets
+directly.
+
+## Reproduce the experiments
+
+Run the final configuration on all four COLD traversals and all three
+CID-SIMS traversals:
+
+```bash
+FORCE=1 RUN_ABLATIONS=0 ./run_experiments.sh
+FORCE=1 RUN_ABLATIONS=0 ./run_cid_sims_experiments.sh
+```
+
+After checking the main runs, generate the visual-only, geometric-only, and
+fixed-threshold ablations without rebuilding completed maps:
+
+```bash
+SKIP_EXISTING=1 RUN_ABLATIONS=1 ./run_experiments.sh
+SKIP_EXISTING=1 RUN_ABLATIONS=1 ./run_cid_sims_experiments.sh
+```
+
+Both runners accept environment names as positional filters. For example:
+
+```bash
+FORCE=1 ./run_experiments.sh freiburg_a
+FORCE=1 ./run_cid_sims_experiments.sh apartment1_1
+```
+
+Run the computationally matched AnyLoc-GeM comparison with:
+
+```bash
+./run_anyloc_baseline.sh all
+```
+
+See [`docs/ANYLOC_BASELINE.md`](docs/ANYLOC_BASELINE.md) for the exact and
+ViT-S-matched configurations, and [`docs/VMF_VALIDATION.md`](docs/VMF_VALIDATION.md)
+for the preserved cosine comparison.
+
+## Outputs
+
+Runs write to `vts_devcontainer/vts_ws/output/revised/`. This directory is
+ignored by Git because graph pickles and generated figures are reproducible
+artifacts. Each main environment contains:
+
+```text
+output/revised/<environment>/
+├── final_graph.pkl
+├── graph_0_noopt.pkl
+├── graph_0_node_gt.json
+├── graph_0_performance.json
+├── metrics_report.json
+├── noopt_report.json
+└── figures/
+    ├── topological_map.pdf
+    ├── lambda2_valleys.pdf
+    └── recorded_odometry.pdf
+```
+
+The suite also writes aggregate `summary.json`, `mapping.csv`,
+`gate_ablation.csv`, `retrieval.csv`, and `runtime.csv` files directly under
+`output/revised/`.
+
+## Using another dataset or robot
+
+TopoSIGMA consumes standard ROS messages rather than dataset files. A new
+adapter or robot must publish:
+
+| Topic | Message | Purpose |
+|---|---|---|
+| `/camera/image` | `sensor_msgs/Image` | BGR camera frame |
+| `/odom` | `nav_msgs/Odometry` | Planar pose with meaningful covariance |
+| `/dataset/sequence_done` | `std_msgs/String` | End-of-run JSON event |
+| `/ground_truth_pose` | `geometry_msgs/PoseStamped` | Optional evaluation metadata |
+| `/dataset/room_label` | `std_msgs/String` | Optional evaluation metadata |
+
+Camera and odometry messages must share a clock. Ground truth and room labels
+are never used for mapping decisions.
+
+## Compute device
+
+`dino_device:=auto` selects CUDA, then Apple Metal Performance Shaders (MPS),
+then CPU according to the active PyTorch runtime. A Linux container running
+through Docker Desktop on macOS cannot access MPS and therefore uses CPU.
+CUDA requires a compatible NVIDIA host, the NVIDIA Container Toolkit, and GPU
+access for the container. The selected device is logged at startup and can be
+overridden explicitly:
+
+```bash
+ros2 launch vts_bringup pipeline.launch.py \
+  config:=cold_freiburg_a.yaml dino_device:=cpu
+```
+
+## Development and validation
+
+From the built and sourced workspace:
+
+```bash
+python3 -m pytest -q src/vts_core/test src/vts_players/test
+
+# Static checks (run from vts_devcontainer/):
+cd /workspaces/visual_topological_slam/vts_devcontainer
+uvx ruff check vts_ws/src
+```
+
+Runtime dependencies are declared in `vts_devcontainer/pyproject.toml` and
+reproduced from `vts_devcontainer/uv.lock`. To intentionally update one
+dependency, run `uv lock --upgrade-package <package>` from
+`vts_devcontainer/`, rebuild the container, and rerun the complete test suite.
+
+## Citation
+
+If TopoSIGMA contributes to your work, please cite the accompanying paper.
+Machine-readable project metadata are provided in [`CITATION.cff`](CITATION.cff).
+
+## License
+
+TopoSIGMA is released under the [MIT License](LICENSE). Dataset and pretrained
+model licenses remain with their respective authors.

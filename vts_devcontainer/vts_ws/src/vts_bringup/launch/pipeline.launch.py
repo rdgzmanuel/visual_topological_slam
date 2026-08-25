@@ -19,6 +19,10 @@ Ablation / experiment overrides (building mode):
     optimize:=true|false
         End-of-run SE(2) pose-graph optimization (default from the config;
         the pre-optimization graph is always saved as graph_*_noopt.pkl).
+    dino_device:=auto|cuda|mps|cpu
+        DINOv2 inference device. ``auto`` prefers CUDA, then Apple MPS, then
+        CPU. MPS requires native macOS execution and is unavailable in the
+        Linux Docker container used by this project.
 
 Example gate ablation sweep for one environment:
 
@@ -55,6 +59,12 @@ def _make_nodes(context: object) -> list[Node]:
     mode: str = LaunchConfiguration("mode").perform(context)
     gate_mode: str = LaunchConfiguration("gate_mode").perform(context)
     optimize: str = LaunchConfiguration("optimize").perform(context)
+    dino_device: str = LaunchConfiguration("dino_device").perform(context)
+    feature_backend: str = LaunchConfiguration("feature_backend").perform(context)
+    visual_model: str = LaunchConfiguration("visual_model").perform(context)
+    dino_model: str = LaunchConfiguration("dino_model").perform(context)
+    dino_layer: str = LaunchConfiguration("dino_layer").perform(context)
+    variant_suffix: str = LaunchConfiguration("variant_suffix").perform(context)
 
     config_path: str = os.path.join(
         get_package_share_directory("vts_bringup"), "config", config_name
@@ -63,6 +73,7 @@ def _make_nodes(context: object) -> list[Node]:
         config: dict[str, object] = yaml.safe_load(f)
 
     mapping: dict[str, object] = dict(config["mapping"])
+    player: dict[str, object] = dict(config["player"])
     player_executable = str(config.get("player_executable", "cold_player"))
     if gate_mode:
         mapping["gate_mode"] = gate_mode
@@ -72,19 +83,31 @@ def _make_nodes(context: object) -> list[Node]:
             mapping["run_name"] = f"{mapping['run_name']}_{gate_mode}"
     if optimize:
         mapping["optimize"] = optimize.strip().lower() in ("1", "true", "yes")
+    if dino_device:
+        mapping["dino_device"] = dino_device
+    if feature_backend:
+        mapping["feature_backend"] = feature_backend
+    if visual_model:
+        mapping["visual_model"] = visual_model
+    if dino_model:
+        mapping["dino_model"] = dino_model
+    if dino_layer:
+        mapping["dino_layer"] = int(dino_layer)
+    if variant_suffix:
+        mapping["output_dir"] = f"{mapping['output_dir']}{variant_suffix}"
+        mapping["run_name"] = f"{mapping['run_name']}{variant_suffix}"
 
     nodes: list[Node] = []
 
     if mode == "building":
-        nodes.append(
-            Node(
-                package="vts_players",
-                executable=player_executable,
-                name="dataset_player",
-                parameters=[dict(config["player"])],
-                output="screen",
-            )
+        dataset_player = Node(
+            package="vts_players",
+            executable=player_executable,
+            name="dataset_player",
+            parameters=[player],
+            output="screen",
         )
+        nodes.append(dataset_player)
         graph_builder: Node = Node(
             package="vts_mapping",
             executable="graph_builder",
@@ -104,6 +127,19 @@ def _make_nodes(context: object) -> list[Node]:
                         EmitEvent(
                             event=Shutdown(reason="graph builder finished")
                         )
+                    ],
+                )
+            )
+        )
+        # A failed player cannot deliver the end-of-sequence message, so the
+        # graph builder would otherwise wait forever. Shut the launch down and
+        # let the runner reject the missing fresh graph.
+        nodes.append(
+            RegisterEventHandler(
+                OnProcessExit(
+                    target_action=dataset_player,
+                    on_exit=[
+                        EmitEvent(event=Shutdown(reason="dataset player finished"))
                     ],
                 )
             )
@@ -145,6 +181,16 @@ def generate_launch_description() -> LaunchDescription:
                     "(empty = use the config value)"
                 ),
             ),
+            DeclareLaunchArgument(
+                "dino_device",
+                default_value="auto",
+                description="DINOv2 inference device: auto|cuda|mps|cpu",
+            ),
+            DeclareLaunchArgument("feature_backend", default_value="dino_cls"),
+            DeclareLaunchArgument("visual_model", default_value=""),
+            DeclareLaunchArgument("dino_model", default_value=""),
+            DeclareLaunchArgument("dino_layer", default_value=""),
+            DeclareLaunchArgument("variant_suffix", default_value=""),
             OpaqueFunction(function=_make_nodes),
         ]
     )

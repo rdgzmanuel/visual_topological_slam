@@ -1,21 +1,20 @@
 {
-    "name": "ROS2 Humble",
+    "name": "ROS 2 Jazzy / Python 3.12",
     "dockerFile": "Dockerfile",
+    "context": "..",
     "build": {
         "args": {
             "WORKSPACE": "${containerWorkspaceFolder}"
         }
     },
+    "workspaceMount": "source=${localWorkspaceFolder}/..,target=/workspaces/visual_topological_slam,type=bind",
+    "workspaceFolder": "/workspaces/visual_topological_slam/vts_devcontainer",
     "remoteUser": "ros",
     "runArgs": [
         "--network=host",
         "--add-host=host.docker.internal:host-gateway",
-        "--hostname=humble",
+        "--hostname=jazzy"
     ],
-    "forwardPorts": [
-        3389
-    ],
-    "postStartCommand": "sudo service xrdp start",
     "mounts": [
         "source=${localWorkspaceFolder}/../encoder,target=/workspace/encoder,type=bind"
     ],
@@ -27,7 +26,8 @@
                         "path": "bash"
                     }
                 },
-                "terminal.integrated.defaultProfile.linux": "bash"
+                "terminal.integrated.defaultProfile.linux": "bash",
+                "python.defaultInterpreterPath": "/usr/bin/python3"
             },
             "extensions": [
                 "ms-python.python",

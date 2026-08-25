@@ -26,6 +26,7 @@ setup(
     maintainer_email="manuelrodriguez@alu.comillas.edu",
     description="Launch files and per-environment configurations.",
     license="MIT",
+    python_requires=">=3.12,<3.13",
     entry_points={
         "console_scripts": [
         ],

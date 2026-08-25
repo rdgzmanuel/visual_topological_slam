@@ -35,6 +35,11 @@ set -euo pipefail
 
 DATA_ROOT="${DATA_ROOT:-/workspace/encoder/seq_data}"
 OUTPUT_ROOT="output/revised"
+VARIANT_SUFFIX="${VARIANT_SUFFIX:-}"
+FEATURE_BACKEND="${FEATURE_BACKEND:-dino_cls}"
+VISUAL_MODEL="${VISUAL_MODEL:-}"
+DINO_MODEL="${DINO_MODEL:-}"
+DINO_LAYER="${DINO_LAYER:-}"
 
 CONFIGS=(cold_freiburg_a cold_freiburg_ext cold_saarbruecken_a cold_saarbruecken_ext)
 OUTDIRS=(freiburg_a freiburg_ext saarbruecken_a saarbruecken_ext)
@@ -70,23 +75,33 @@ for i in "${!CONFIGS[@]}"; do
     config="${CONFIGS[$i]}.yaml"
     config_path="src/vts_bringup/config/${config}"
     outdir="${OUTDIRS[$i]}"
+    base_outdir="${outdir}"
+    outdir="${outdir}${VARIANT_SUFFIX}"
     gt_dir="${DATA_ROOT}/${SEQS[$i]}/std_cam"
     labels_file="${DATA_ROOT}/${SEQS[$i]}/localization/places.lst"
-    wanted "$outdir" "$@" || continue
+    wanted "$base_outdir" "$@" || continue
 
     main_dir="${OUTPUT_ROOT}/${outdir}"
     performance="${main_dir}/graph_0_performance.json"
-    if [ -f "${main_dir}/metrics_report.json" ] && \
+    if [ -z "${VARIANT_SUFFIX}" ] && \
+       [ -f "${main_dir}/metrics_report.json" ] && \
        [ ! -f "${main_dir}/visual_first_metrics_report.json" ]; then
         cp -p "${main_dir}/metrics_report.json" \
             "${main_dir}/visual_first_metrics_report.json"
     fi
-    if [ -f "${main_dir}/metrics_report.json" ] && \
+    if [ -z "${VARIANT_SUFFIX}" ] && \
+       [ -f "${main_dir}/metrics_report.json" ] && \
        [ ! -f "${main_dir}/always_visual_metrics_report.json" ]; then
         cp -p "${main_dir}/metrics_report.json" \
             "${main_dir}/always_visual_metrics_report.json"
     fi
-    if [ -f "${performance}" ] && \
+    if [ -z "${VARIANT_SUFFIX}" ] && \
+       [ -f "${main_dir}/metrics_report.json" ] && \
+       [ ! -f "${main_dir}/adaptive_cosine_metrics_report.json" ]; then
+        cp -p "${main_dir}/metrics_report.json" \
+            "${main_dir}/adaptive_cosine_metrics_report.json"
+    fi
+    if [ -z "${VARIANT_SUFFIX}" ] && [ -f "${performance}" ] && \
        grep -q '"optimizer_backend": "gtsam"' "${performance}"; then
         [ -f "${main_dir}/gtsam_metrics_report.json" ] || \
             cp -p "${main_dir}/metrics_report.json" \
@@ -101,15 +116,26 @@ for i in "${!CONFIGS[@]}"; do
         if [ "$mode" = "both" ]; then
             result="${OUTPUT_ROOT}/${outdir}/final_graph.pkl"
         else
-            result="${OUTPUT_ROOT}/${outdir}_${mode}/final_graph.pkl"
+            result="${OUTPUT_ROOT}/${base_outdir}_${mode}${VARIANT_SUFFIX}/final_graph.pkl"
         fi
         if mapping_is_current "$result" "$config_path"; then
             echo "=== ${config} | gate_mode=${mode} — up to date, skipping ==="
             continue
         fi
         echo "=== ${config} | gate_mode=${mode} ==="
-        ros2 launch vts_bringup pipeline.launch.py \
-            config:="${config}" mode:=building gate_mode:="${mode}"
+        launch_args=(
+            config:="${config}"
+            mode:=building
+            gate_mode:="${mode}"
+            feature_backend:="${FEATURE_BACKEND}"
+        )
+        [ -z "${VARIANT_SUFFIX}" ] || \
+            launch_args+=(variant_suffix:="${VARIANT_SUFFIX}")
+        [ -z "${DINO_MODEL}" ] || launch_args+=(dino_model:="${DINO_MODEL}")
+        [ -z "${DINO_LAYER}" ] || launch_args+=(dino_layer:="${DINO_LAYER}")
+        [ -z "${VISUAL_MODEL}" ] || \
+            launch_args+=(visual_model:="${VISUAL_MODEL}")
+        ros2 launch vts_bringup pipeline.launch.py "${launch_args[@]}"
     done
 
     echo "=== ${config} | final no-GTSAM map + text retrieval metrics ==="
@@ -147,11 +173,11 @@ for i in "${!CONFIGS[@]}"; do
         for mode in visual geometric threshold; do
             echo "=== ${config} | ablation metrics: ${mode} ==="
             python3 -m vts_evaluation.evaluate_run \
-                --graph "${OUTPUT_ROOT}/${outdir}_${mode}/graph_0_noopt.pkl" \
-                --node-gt "${OUTPUT_ROOT}/${outdir}_${mode}/graph_0_node_gt.json" \
+                --graph "${OUTPUT_ROOT}/${base_outdir}_${mode}${VARIANT_SUFFIX}/graph_0_noopt.pkl" \
+                --node-gt "${OUTPUT_ROOT}/${base_outdir}_${mode}${VARIANT_SUFFIX}/graph_0_node_gt.json" \
                 --gt-trajectory "${gt_dir}" \
                 --no-viz \
-                > "${OUTPUT_ROOT}/${outdir}_${mode}/metrics_report.json"
+                > "${OUTPUT_ROOT}/${base_outdir}_${mode}${VARIANT_SUFFIX}/metrics_report.json"
         done
     fi
 done

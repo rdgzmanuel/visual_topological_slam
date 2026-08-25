@@ -4,11 +4,10 @@ Renders the generated map to a PNG (plus a ``.pgf`` twin for LaTeX) so map
 quality is inspectable at a glance:
 
 - Nodes are coloured by room class (abbreviated class labels in the legend;
-  the report gives the abbreviation-to-full-name key). When
-  per-node ground truth is available each node is *painted* at the
-  ground-truth coordinates of the frame that created it. Ground truth is a
-  paint-time input only: the mapper decides where and when to place nodes
-  from odometry alone and never reads GT.
+  the report gives the abbreviation-to-full-name key). Floorplan overlays
+  rigidly align the estimated node layout to per-node ground truth with one
+  best-fit SE(2) transform. The relative distortion of the estimated map is
+  therefore preserved and remains visible in the figure.
 - Sequential traversal edges and loop closures use distinct line styles.
 - The GT trajectory is drawn underneath for spatial context.
 
@@ -268,11 +267,13 @@ def render_on_floorplan(
 ) -> bool:
     """Overlay the map on a metric floorplan image.
 
-    Nodes are painted at their ground-truth coordinates (paint-time only —
-    the mapper placed them from odometry), so per-node ground truth is
-    required, along with a ``<floorplan>.calib.json`` sidecar giving the
-    world-metres -> pixel affine. Degrades gracefully (returns False) if
-    matplotlib, the floorplan, the calibration, or the GT are unavailable.
+    Estimated node poses are rigidly aligned to their ground-truth
+    counterparts with one best-fit SE(2) transform before being projected
+    onto the floorplan. This removes only the arbitrary global frame; scale
+    and internal map distortion remain visible. Per-node ground truth and a
+    ``<floorplan>.calib.json`` sidecar are therefore required. Degrades
+    gracefully (returns False) if matplotlib, the floorplan, the calibration,
+    or the GT are unavailable.
     """
     try:
         import matplotlib
@@ -303,9 +304,18 @@ def render_on_floorplan(
         print(f"[viz] bad floorplan calibration: {error}")
         return False
 
-    # Nodes are painted at their ground-truth coordinates, which live
-    # directly in the floorplan's world frame (no alignment needed).
+    # Align the mapper's odometry-frame layout to the floorplan frame without
+    # changing scale or internal geometry. Unlike painting nodes at GT, this
+    # keeps drift, stretched paths, and wall crossings visible.
     gt_pos: np.ndarray = np.array([node_gt[i] for i in ids], dtype=np.float64)
+    from vts_core.matching import fit_se2
+
+    fit = fit_se2(graph.positions(), gt_pos)
+    if fit is None:
+        print("[viz] floorplan overlay needs at least two nodes; skipping")
+        return False
+    rotation, translation = fit
+    drawn_pos: np.ndarray = graph.positions() @ rotation.T + translation
 
     floor = np.array(Image.open(floorplan_path).convert("RGB"))
     height, width = floor.shape[:2]
@@ -319,7 +329,7 @@ def render_on_floorplan(
             label="Ground-truth trajectory",
         )
 
-    cols, rows = transform(gt_pos[:, 0], gt_pos[:, 1])
+    cols, rows = transform(drawn_pos[:, 0], drawn_pos[:, 1])
     index: dict[int, int] = {nid: k for k, nid in enumerate(ids)}
     for id_a, id_b in graph.edges():
         ka, kb = index[id_a], index[id_b]
