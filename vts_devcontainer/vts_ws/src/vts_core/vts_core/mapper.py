@@ -33,7 +33,11 @@ import numpy as np
 
 from vts_core.directional import fit_von_mises_fisher, vmf_log_overlap_ratio
 from vts_core.matching import gaussian_position_nll, mahalanobis_gate
-from vts_core.node_detection import AdaptiveValleyDetector, ConnectivityMonitor
+from vts_core.node_detection import (
+    AdaptiveValleyDetector,
+    ConnectivityMonitor,
+    FixedValleyDetector,
+)
 from vts_core.pose_graph import OptimizationResult, optimize_se2
 from vts_core.topo_graph import (
     LOOP_TEMPORAL_EXCLUSION_NODES,
@@ -71,6 +75,7 @@ _MIN_NODES_FOR_REVISIT: int = 5
 # cosine-similarity threshold — the baseline the dual gate is argued against.
 GATE_MODES: tuple[str, ...] = ("both", "visual", "geometric", "threshold")
 VISUAL_MODELS: tuple[str, ...] = ("vmf", "cosine")
+VALLEY_MODES: tuple[str, ...] = ("adaptive", "fixed")
 # Absolute cosine-similarity threshold used by the "threshold" ablation mode.
 _NAIVE_THRESHOLD: float = 0.7
 
@@ -100,6 +105,8 @@ class TopologicalMapper:
         window_size: int = 30,
         frame_id: str = "run",
         valley_k: float = 1.5,
+        valley_mode: str = "adaptive",
+        valley_delta: float = 0.1,
         visual_outlier_k: float = _VISUAL_OUTLIER_K,
         optimize: bool = True,
         optimizer_backend: str = "gtsam",
@@ -116,6 +123,9 @@ class TopologicalMapper:
                 when lambda_2 rises ``valley_k`` robust deviations above its
                 running minimum, so a LARGER value yields FEWER, more separated
                 nodes (raise it if nodes cluster too densely).
+            valley_mode: ``adaptive`` for MAD-scaled prominence or ``fixed``
+                for the controlled absolute-prominence baseline.
+            valley_delta: Absolute prominence used only in ``fixed`` mode.
             visual_outlier_k: Strictness of the visual revisit gate (robust
                 MAD multiplier). LOWER it to close loops more aggressively, RAISE for
                 stricter loop closures. See ``_VISUAL_OUTLIER_K``.
@@ -143,6 +153,10 @@ class TopologicalMapper:
                 f"visual_model must be one of {VISUAL_MODELS}, "
                 f"got {visual_model!r}"
             )
+        if valley_mode not in VALLEY_MODES:
+            raise ValueError(
+                f"valley_mode must be one of {VALLEY_MODES}, got {valley_mode!r}"
+            )
         self.graph: TopoGraph = TopoGraph(frame_id=frame_id)
         self.current_node_id: int | None = None
         self._visual_outlier_k: float = visual_outlier_k
@@ -153,7 +167,11 @@ class TopologicalMapper:
         self._visual_model = visual_model
 
         self._monitor: ConnectivityMonitor = ConnectivityMonitor(window_size)
-        self._detector: AdaptiveValleyDetector = AdaptiveValleyDetector(k=valley_k)
+        self._detector: AdaptiveValleyDetector | FixedValleyDetector = (
+            AdaptiveValleyDetector(k=valley_k)
+            if valley_mode == "adaptive"
+            else FixedValleyDetector(delta=valley_delta)
+        )
         self._frame_count: int = 0
         self._pending_frames: list[FrameRecord] = []
 

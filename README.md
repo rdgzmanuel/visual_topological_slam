@@ -47,6 +47,8 @@ the map has been built. It does not influence node creation or loop closure.
         ├── run_experiments.sh       COLD experiment suite
         ├── run_cid_sims_experiments.sh
         ├── run_anyloc_baseline.sh
+        ├── evaluate_tolerance_sweep.sh
+        ├── evaluate_node_segmentation.sh
         └── src/
             ├── vts_core/            Dataset-independent algorithms
             ├── vts_players/         COLD and CID-SIMS adapters
@@ -182,6 +184,47 @@ Run the computationally matched AnyLoc-GeM comparison with:
 ```bash
 ./run_anyloc_baseline.sh all
 ```
+
+Once the seven main maps exist, re-score the unchanged graphs at ground-truth
+distance tolerances of 0.5, 1, 2, and 3 m:
+
+```bash
+./evaluate_tolerance_sweep.sh
+```
+
+This offline sweep does not rerun mapping or overwrite the primary reports.
+It evaluates both TopoSIGMA and the AnyLoc-GeM ViT-S baseline, and writes
+`loop_tolerance_sweep.json` and `loop_tolerance_sweep.csv` under
+`output/revised/`. To score the existing gate ablations as well, run
+`INCLUDE_ABLATIONS=1 ./evaluate_tolerance_sweep.sh`. If the AnyLoc artifacts
+have not been generated, they may be omitted explicitly with
+`INCLUDE_ANYLOC=0`.
+
+Evaluate the adaptive node-creation rule from the saved algebraic-connectivity
+traces, including a sensitivity sweep over `k = {1, 1.5, 2, 2.5, 3}`:
+
+```bash
+./evaluate_node_segmentation.sh
+```
+
+This second offline experiment compares the final adaptive detector with the
+same hysteresis using a constant prominence. The constant is calibrated only
+on Freiburg A to match the final method's node count, without using room
+labels, and is then frozen for every other environment. Results are written to
+`node_segmentation_experiment.json` and `node_segmentation_experiment.csv`
+under `output/revised/`; existing maps and reports remain unchanged.
+
+To measure how node granularity propagates into loop closure and map quality,
+run the end-to-end sensitivity suite. It preserves the existing adaptive
+`k=2` maps and creates four additional adaptive settings plus a calibrated
+fixed-prominence baseline in suffixed output directories:
+
+```bash
+./run_node_sensitivity_experiments.sh
+```
+
+The suite is resumable. Use `FORCE=1` only when every sensitivity variant
+should intentionally be rebuilt.
 
 See [`docs/ANYLOC_BASELINE.md`](docs/ANYLOC_BASELINE.md) for the exact and
 ViT-S-matched configurations, and [`docs/VMF_VALIDATION.md`](docs/VMF_VALIDATION.md)

@@ -13,6 +13,16 @@ FEATURE_BACKEND="${FEATURE_BACKEND:-dino_cls}"
 VISUAL_MODEL="${VISUAL_MODEL:-}"
 DINO_MODEL="${DINO_MODEL:-}"
 DINO_LAYER="${DINO_LAYER:-}"
+VALLEY_MODE="${VALLEY_MODE:-}"
+VALLEY_K="${VALLEY_K:-}"
+VALLEY_DELTA="${VALLEY_DELTA:-}"
+
+if { [ -n "${VALLEY_MODE}" ] || [ -n "${VALLEY_K}" ] || \
+     [ -n "${VALLEY_DELTA}" ]; } && [ -z "${VARIANT_SUFFIX}" ]; then
+    echo "Node-detector overrides require a non-empty VARIANT_SUFFIX." >&2
+    echo "This safeguard prevents overwriting the final k=2 results." >&2
+    exit 2
+fi
 CONFIGS=(
     cid_sims_apartment1_1.yaml
     cid_sims_apartment2_1.yaml
@@ -172,6 +182,11 @@ for index in "${!CONFIGS[@]}"; do
         [ -z "${DINO_LAYER}" ] || launch_args+=(dino_layer:="${DINO_LAYER}")
         [ -z "${VISUAL_MODEL}" ] || \
             launch_args+=(visual_model:="${VISUAL_MODEL}")
+        [ -z "${VALLEY_MODE}" ] || \
+            launch_args+=(valley_mode:="${VALLEY_MODE}")
+        [ -z "${VALLEY_K}" ] || launch_args+=(valley_k:="${VALLEY_K}")
+        [ -z "${VALLEY_DELTA}" ] || \
+            launch_args+=(valley_delta:="${VALLEY_DELTA}")
         ros2 launch vts_bringup pipeline.launch.py "${launch_args[@]}"
         if [ ! -f "${result}" ] || [ ! "${result}" -nt "${completion_marker}" ]; then
             rm -f "${completion_marker}"
@@ -202,7 +217,9 @@ for index in "${!CONFIGS[@]}"; do
 
     python3 -m vts_evaluation.plot_lambda2 \
         --lambda2 "${main_dir}/graph_0_lambda2.npy" \
-        --valley-k 2.0 --skip 30 \
+        --valley-mode "${VALLEY_MODE:-adaptive}" \
+        --valley-k "${VALLEY_K:-2.0}" \
+        --valley-delta "${VALLEY_DELTA:-0.1}" --skip 30 \
         --out "${figures_dir}/lambda2_valleys.pdf"
     python3 -m vts_evaluation.plot_odometry \
         --gt-trajectory "${gt_path}" \
@@ -221,9 +238,9 @@ for index in "${!CONFIGS[@]}"; do
     fi
 done
 
-if [ "$#" -eq 0 ]; then
+if [ "$#" -eq 0 ] && [ -z "${VARIANT_SUFFIX}" ]; then
     python3 -m vts_evaluation.summarize_experiments --root "${OUTPUT_ROOT}"
     echo "All CID-SIMS experiments complete. Reports are under ${OUTPUT_ROOT}/cid_sims_apartment*/"
 else
-    echo "Selected CID-SIMS experiments complete. Global summary not refreshed."
+    echo "Selected or variant CID-SIMS experiments complete. Global summary preserved."
 fi

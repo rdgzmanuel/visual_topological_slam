@@ -186,3 +186,59 @@ class AdaptiveValleyDetector:
             self.latencies.append(self.last_latency_samples)
             return self._min_index
         return None
+
+
+class FixedValleyDetector:
+    """Two-extremum hysteresis detector with a constant prominence."""
+
+    def __init__(self, delta: float, warmup: int = 30) -> None:
+        """
+        Args:
+            delta: Absolute lambda_2 recovery required to confirm a valley.
+            warmup: Minimum samples before the detector may enter a valley.
+        """
+        if not np.isfinite(delta) or delta <= 0.0:
+            raise ValueError("delta must be positive and finite")
+        if warmup < 2:
+            raise ValueError("warmup must be at least 2")
+        self._delta: float = delta
+        self._warmup: int = warmup
+        self._look_for_max: bool = True
+        self._max_value: float = float("-inf")
+        self._min_value: float = float("inf")
+        self._min_index: int = 0
+        self._sample_index: int = -1
+        self.last_latency_samples: int | None = None
+        self.latencies: list[int] = []
+
+    @property
+    def warmup(self) -> int:
+        """Minimum number of lambda_2 samples required before detection."""
+        return self._warmup
+
+    def step(self, lambda_2: float) -> int | None:
+        """Feed one lambda_2 sample and return a confirmed valley index."""
+        self._sample_index += 1
+
+        if self._look_for_max:
+            if lambda_2 > self._max_value:
+                self._max_value = lambda_2
+            if (
+                self._sample_index + 1 >= self._warmup
+                and lambda_2 < self._max_value - self._delta
+            ):
+                self._look_for_max = False
+                self._min_value = lambda_2
+                self._min_index = self._sample_index
+            return None
+
+        if lambda_2 < self._min_value:
+            self._min_value = lambda_2
+            self._min_index = self._sample_index
+        if lambda_2 > self._min_value + self._delta:
+            self._look_for_max = True
+            self._max_value = lambda_2
+            self.last_latency_samples = self._sample_index - self._min_index
+            self.latencies.append(self.last_latency_samples)
+            return self._min_index
+        return None

@@ -1,9 +1,9 @@
 """Plot the algebraic-connectivity (lambda_2) series with detected valleys.
 
-Replays the AdaptiveValleyDetector over a lambda_2 series saved by the graph
-builder (``output/<env>/graph_<i>_lambda2.npy``), so the plotted valleys are
-exactly what the mapper detected for a given ``valley_k``. Used to generate
-the node-extraction figure of the paper.
+Replays the configured valley detector over a lambda_2 series saved by the
+graph builder (``output/<env>/graph_<i>_lambda2.npy``), so the plotted valleys
+are exactly what the mapper detected. Used to generate the node-extraction
+figure of the paper.
 
     python3 -m vts_evaluation.plot_lambda2 \
         --lambda2 output/revised/freiburg_a/graph_0_lambda2.npy \
@@ -16,12 +16,22 @@ import argparse
 
 import numpy as np
 
-from vts_core.node_detection import AdaptiveValleyDetector
+from vts_core.node_detection import AdaptiveValleyDetector, FixedValleyDetector
 
 
-def detect_valleys(series: np.ndarray, valley_k: float) -> list[int]:
-    """Replay the adaptive detector over a saved lambda_2 series."""
-    detector = AdaptiveValleyDetector(k=valley_k)
+def detect_valleys(
+    series: np.ndarray,
+    valley_k: float,
+    valley_mode: str = "adaptive",
+    valley_delta: float = 0.1,
+) -> list[int]:
+    """Replay the selected detector over a saved lambda_2 series."""
+    if valley_mode == "adaptive":
+        detector = AdaptiveValleyDetector(k=valley_k)
+    elif valley_mode == "fixed":
+        detector = FixedValleyDetector(delta=valley_delta)
+    else:
+        raise ValueError("valley_mode must be 'adaptive' or 'fixed'")
     valleys: list[int] = []
     for value in series:
         index = detector.step(float(value))
@@ -35,6 +45,10 @@ def main() -> None:
     parser.add_argument("--lambda2", required=True, help="graph_<i>_lambda2.npy path")
     parser.add_argument("--valley-k", type=float, default=1.5,
                         help="detector sensitivity (use the run's config value)")
+    parser.add_argument(
+        "--valley-mode", choices=("adaptive", "fixed"), default="adaptive"
+    )
+    parser.add_argument("--valley-delta", type=float, default=0.1)
     parser.add_argument("--out", default="lambda2_valleys.pdf")
     parser.add_argument("--figsize", nargs=2, type=float, default=[8.0, 3.2])
     parser.add_argument(
@@ -50,9 +64,18 @@ def main() -> None:
     import matplotlib.pyplot as plt
 
     series: np.ndarray = np.load(args.lambda2)
-    valleys: list[int] = detect_valleys(series, args.valley_k)
-    print(f"[lambda2] {len(series)} samples, {len(valleys)} valleys "
-          f"(valley_k={args.valley_k})")
+    valleys: list[int] = detect_valleys(
+        series, args.valley_k, args.valley_mode, args.valley_delta
+    )
+    parameter = (
+        f"valley_k={args.valley_k}"
+        if args.valley_mode == "adaptive"
+        else f"valley_delta={args.valley_delta}"
+    )
+    print(
+        f"[lambda2] {len(series)} samples, {len(valleys)} valleys "
+        f"({args.valley_mode}, {parameter})"
+    )
 
     start: int = max(0, args.skip)
     fig, ax = plt.subplots(figsize=tuple(args.figsize))

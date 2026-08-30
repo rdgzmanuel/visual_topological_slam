@@ -2,7 +2,11 @@ import unittest
 
 import numpy as np
 
-from vts_core.node_detection import AdaptiveValleyDetector, ConnectivityMonitor
+from vts_core.node_detection import (
+    AdaptiveValleyDetector,
+    ConnectivityMonitor,
+    FixedValleyDetector,
+)
 
 
 class NodeDetectionTest(unittest.TestCase):
@@ -23,6 +27,19 @@ class NodeDetectionTest(unittest.TestCase):
         self.assertTrue(all(v is None for v in outputs[:6]))
         self.assertEqual(outputs[-1], 4)
         self.assertEqual(detector.last_latency_samples, 2)
+
+    def test_fixed_detector_returns_local_minimum_and_latency(self) -> None:
+        detector = FixedValleyDetector(delta=0.2, warmup=2)
+        outputs = [detector.step(v) for v in (1.0, 1.1, 1.0, 0.6, 0.4, 0.7)]
+
+        self.assertEqual(outputs[-1], 4)
+        self.assertEqual(detector.last_latency_samples, 1)
+        self.assertEqual(detector.latencies, [1])
+
+    def test_fixed_detector_rejects_invalid_parameters(self) -> None:
+        for delta in (0.0, -1.0, float("nan")):
+            with self.assertRaises(ValueError):
+                FixedValleyDetector(delta)
 
 
 if __name__ == "__main__":

@@ -65,6 +65,9 @@ def _make_nodes(context: object) -> list[Node]:
     dino_model: str = LaunchConfiguration("dino_model").perform(context)
     dino_layer: str = LaunchConfiguration("dino_layer").perform(context)
     variant_suffix: str = LaunchConfiguration("variant_suffix").perform(context)
+    valley_mode: str = LaunchConfiguration("valley_mode").perform(context)
+    valley_k: str = LaunchConfiguration("valley_k").perform(context)
+    valley_delta: str = LaunchConfiguration("valley_delta").perform(context)
 
     config_path: str = os.path.join(
         get_package_share_directory("vts_bringup"), "config", config_name
@@ -93,6 +96,12 @@ def _make_nodes(context: object) -> list[Node]:
         mapping["dino_model"] = dino_model
     if dino_layer:
         mapping["dino_layer"] = int(dino_layer)
+    if valley_mode:
+        mapping["valley_mode"] = valley_mode
+    if valley_k:
+        mapping["valley_k"] = float(valley_k)
+    if valley_delta:
+        mapping["valley_delta"] = float(valley_delta)
     if variant_suffix:
         mapping["output_dir"] = f"{mapping['output_dir']}{variant_suffix}"
         mapping["run_name"] = f"{mapping['run_name']}{variant_suffix}"
@@ -191,6 +200,9 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument("dino_model", default_value=""),
             DeclareLaunchArgument("dino_layer", default_value=""),
             DeclareLaunchArgument("variant_suffix", default_value=""),
+            DeclareLaunchArgument("valley_mode", default_value=""),
+            DeclareLaunchArgument("valley_k", default_value=""),
+            DeclareLaunchArgument("valley_delta", default_value=""),
             OpaqueFunction(function=_make_nodes),
         ]
     )

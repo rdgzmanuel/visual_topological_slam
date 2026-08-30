@@ -31,7 +31,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
 import sys
 import time
 from contextlib import redirect_stdout
@@ -47,32 +46,7 @@ from vts_core.metrics import (
     trajectory_metrics,
 )
 from vts_core.topo_graph import TopoGraph
-
-# COLD ground-truth poses are encoded in the image filenames. Parsed here with
-# a local regex so the offline evaluator needs neither ROS nor OpenCV (the
-# player node that also parses these names imports both).
-_COLD_FILENAME: re.Pattern[str] = re.compile(
-    r"_x(?P<x>-?\d+\.?\d*)_y(?P<y>-?\d+\.?\d*)_a(?P<a>-?\d+\.?\d*)"
-)
-
-
-def _gt_trajectory_from_cold_dir(images_dir: str) -> np.ndarray:
-    """Parse ground-truth (x, y) from COLD filenames in a directory."""
-    points: list[tuple[float, float]] = []
-    for name in sorted(os.listdir(images_dir)):
-        match: re.Match[str] | None = _COLD_FILENAME.search(name)
-        if match is not None:
-            points.append((float(match.group("x")), float(match.group("y"))))
-    return np.array(points, dtype=np.float64).reshape(-1, 2)
-
-
-def _ground_truth_xy(path: str) -> np.ndarray:
-    """Load COLD filename ground truth or CID-SIMS ``groundtruth.txt``."""
-    if os.path.isdir(path):
-        return _gt_trajectory_from_cold_dir(path)
-    from vts_players.cid_sims_data import load_ground_truth
-
-    return load_ground_truth(path).poses[:, :2].copy()
+from vts_evaluation.ground_truth import load_ground_truth_xy
 
 
 def main() -> None:
@@ -137,7 +111,7 @@ def main() -> None:
 
     gt_xy: np.ndarray | None = None
     if args.gt_trajectory:
-        gt_xy = _ground_truth_xy(args.gt_trajectory)
+        gt_xy = load_ground_truth_xy(args.gt_trajectory)
 
     node_gt: dict[int, np.ndarray] | None = None
     if args.node_gt and os.path.exists(args.node_gt):

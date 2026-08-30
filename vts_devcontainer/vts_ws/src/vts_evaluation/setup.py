@@ -26,6 +26,8 @@ setup(
             "plot_lambda2 = vts_evaluation.plot_lambda2:main",
             "make_queries = vts_evaluation.make_queries:main",
             "summarize_experiments = vts_evaluation.summarize_experiments:main",
+            "tolerance_sweep = vts_evaluation.tolerance_sweep:main",
+            "node_segmentation = vts_evaluation.node_segmentation:main",
         ],
     },
 )

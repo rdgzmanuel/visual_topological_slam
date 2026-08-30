@@ -55,6 +55,8 @@ class GraphBuilderNode(Node):
 
         self.declare_parameter("window_size", 30)
         self.declare_parameter("valley_k", 2.0)
+        self.declare_parameter("valley_mode", "adaptive")
+        self.declare_parameter("valley_delta", 0.1)
         self.declare_parameter("visual_outlier_k", 2.0)
         self.declare_parameter("optimize", True)
         self.declare_parameter("optimizer_backend", "gtsam")
@@ -79,6 +81,8 @@ class GraphBuilderNode(Node):
         self._valley_k: float = (
             self.get_parameter("valley_k").get_parameter_value().double_value
         )
+        self._valley_mode = str(self.get_parameter("valley_mode").value)
+        self._valley_delta = float(self.get_parameter("valley_delta").value)
         self._visual_outlier_k: float = (
             self.get_parameter("visual_outlier_k").get_parameter_value().double_value
         )
@@ -190,6 +194,8 @@ class GraphBuilderNode(Node):
         return TopologicalMapper(
             window_size=self._window_size,
             valley_k=self._valley_k,
+            valley_mode=self._valley_mode,
+            valley_delta=self._valley_delta,
             visual_outlier_k=self._visual_outlier_k,
             optimize=self._optimize,
             optimizer_backend=self._optimizer_backend,
@@ -331,6 +337,9 @@ class GraphBuilderNode(Node):
         perf["dino_model"] = self._dino_model
         perf["dino_layer"] = self._dino_layer
         perf["visual_model"] = self._visual_model
+        perf["valley_mode"] = self._valley_mode
+        perf["valley_k"] = self._valley_k
+        perf["valley_delta"] = self._valley_delta
         perf["end_to_end_time_ms_per_frame"] = (
             perf["encoder_time_ms_per_frame"] + perf["map_update_time_ms"]
         )

@@ -3,6 +3,7 @@ import unittest
 import numpy as np
 
 from vts_core.mapper import FrameRecord, TopologicalMapper
+from vts_core.node_detection import FixedValleyDetector
 
 
 def _frame(x: float, descriptor: np.ndarray) -> FrameRecord:
@@ -17,6 +18,17 @@ def _frame(x: float, descriptor: np.ndarray) -> FrameRecord:
 
 
 class MapperOdometryTest(unittest.TestCase):
+    def test_fixed_node_detector_can_be_selected_explicitly(self) -> None:
+        mapper = TopologicalMapper(
+            valley_mode="fixed", valley_delta=0.13, optimize=False
+        )
+
+        self.assertIsInstance(mapper._detector, FixedValleyDetector)
+
+    def test_unknown_node_detector_is_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            TopologicalMapper(valley_mode="unknown", optimize=False)
+
     def test_confirmed_valley_splits_at_original_boundary(self) -> None:
         class Monitor:
             def __init__(self) -> None:
