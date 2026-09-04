@@ -160,11 +160,19 @@ for i in "${!CONFIGS[@]}"; do
     python3 -m vts_evaluation.make_queries \
         --labels-file "${labels_file}" \
         --out "${OUTPUT_ROOT}/${outdir}/queries.json"
+    legend_loc="best"
+    legend_ncol=1
+    if [ "${base_outdir}" = "freiburg_a" ]; then
+        legend_loc="upper right"
+        legend_ncol=2
+    fi
     python3 -m vts_evaluation.evaluate_run \
         --graph "${main_graph}" \
         --node-gt "${OUTPUT_ROOT}/${outdir}/graph_0_node_gt.json" \
         --gt-trajectory "${gt_dir}" \
         --queries "${OUTPUT_ROOT}/${outdir}/queries.json" \
+        --legend-loc "${legend_loc}" \
+        --legend-ncol "${legend_ncol}" \
         --viz-path "${figures_dir}/topological_map.pdf" \
         > "${OUTPUT_ROOT}/${outdir}/metrics_report.json"
 

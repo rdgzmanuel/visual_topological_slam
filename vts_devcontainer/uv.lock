@@ -1044,7 +1044,7 @@ wheels = [
 ]
 
 [[package]]
-name = "visual-topological-slam-runtime"
+name = "topo-sigma-runtime"
 version = "1.0.0"
 source = { virtual = "." }
 dependencies = [

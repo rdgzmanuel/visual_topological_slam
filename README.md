@@ -7,7 +7,7 @@ ROS 2. It turns synchronized camera and wheel-odometry streams into a compact
 place graph while treating node formation and loop closure as separate
 inference problems.
 
-![TopoSIGMA pipeline](assets/readme/toposigma_pipeline.png)
+![TopoSIGMA pipeline](assets/readme/toposigma_pipeline.webp)
 
 The system uses a frozen DINOv2 encoder and contains no learned
 dataset-specific state. Algebraic connectivity in a sliding visual graph
@@ -17,8 +17,8 @@ closure is geometry-first: propagated odometry covariance supplies physically
 compatible candidates, and bidirectional vMF sequence evidence is used only
 when several candidates remain.
 
-An optional CLIP module supports open-vocabulary text-to-node retrieval after
-the map has been built. It does not influence node creation or loop closure.
+An optional CLIP module applies open-vocabulary text-to-node retrieval to the
+completed graph.
 
 ## Highlights
 
@@ -30,7 +30,7 @@ the map has been built. It does not influence node creation or loop closure.
 - Reproducible COLD and CID-SIMS experiment runners with resumable ablations.
 - Optional AnyLoc-GeM comparison and CLIP text-to-node retrieval.
 
-![Directional node model](assets/readme/directional_node_model.png)
+![Directional node model](assets/readme/directional_node_model.webp)
 
 ## Repository structure
 
@@ -44,6 +44,7 @@ the map has been built. It does not influence node creation or loop closure.
     ├── pyproject.toml               Python dependency declaration
     ├── uv.lock                      Reproducible dependency lock
     └── vts_ws/
+        ├── language_queries_100.json  Cross-laboratory language benchmark
         ├── run_experiments.sh       COLD experiment suite
         ├── run_cid_sims_experiments.sh
         ├── run_anyloc_baseline.sh
@@ -121,7 +122,7 @@ freshness of generated graphs before accepting a run.
 Open `vts_devcontainer/` in the development container, then run:
 
 ```bash
-cd /workspaces/visual_topological_slam/vts_devcontainer/vts_ws
+cd /workspaces/topo_sigma/vts_devcontainer/vts_ws
 
 colcon build --symlink-install \
   --packages-select vts_core vts_players vts_mapping \
@@ -226,6 +227,29 @@ fixed-prominence baseline in suffixed output directories:
 The suite is resumable. Use `FORCE=1` only when every sensitivity variant
 should intentionally be rebuilt.
 
+### Benchmark text-to-node retrieval
+
+The supplied benchmark evaluates the same 100 English requests on every
+annotated COLD map. It covers direct place names, commands, paraphrases,
+functional descriptions, object cues, scene descriptions, and indirect
+requests. Because not every room class occurs in every traversal, it measures
+both retrieval and the rejection of unavailable destinations.
+
+After building and sourcing the workspace and generating the four COLD maps,
+run:
+
+```bash
+python3 -m vts_evaluation.language_benchmark \
+  --benchmark language_queries_100.json \
+  --maps-root output/revised \
+  --graph-name graph_0_noopt.pkl \
+  --out output/revised/language_benchmark.json
+```
+
+The report contains per-map and aggregate recall at ranks one and three, mean
+reciprocal rank, answer coverage, precision among answered queries, rejection
+rate for absent destinations, and all individual ranked results.
+
 See [`docs/ANYLOC_BASELINE.md`](docs/ANYLOC_BASELINE.md) for the exact and
 ViT-S-matched configurations, and [`docs/VMF_VALIDATION.md`](docs/VMF_VALIDATION.md)
 for the preserved cosine comparison.
@@ -252,7 +276,8 @@ output/revised/<environment>/
 
 The suite also writes aggregate `summary.json`, `mapping.csv`,
 `gate_ablation.csv`, `retrieval.csv`, and `runtime.csv` files directly under
-`output/revised/`.
+`output/revised/`. The optional language benchmark writes
+`language_benchmark.json` alongside them.
 
 ## Using another dataset or robot
 
@@ -292,7 +317,7 @@ From the built and sourced workspace:
 python3 -m pytest -q src/vts_core/test src/vts_players/test
 
 # Static checks (run from vts_devcontainer/):
-cd /workspaces/visual_topological_slam/vts_devcontainer
+cd /workspaces/topo_sigma/vts_devcontainer
 uvx ruff check vts_ws/src
 ```
 

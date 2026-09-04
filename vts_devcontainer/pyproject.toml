@@ -1,5 +1,5 @@
 [project]
-name = "visual-topological-slam-runtime"
+name = "topo-sigma-runtime"
 version = "1.0.0"
 description = "Locked Python runtime for the ROS 2 visual topological mapping workspace"
 requires-python = ">=3.12,<3.13"

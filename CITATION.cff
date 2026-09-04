@@ -9,7 +9,7 @@ authors:
     given-names: "Jaime"
   - family-names: "Tordesillas"
     given-names: "Jesus"
-repository-code: "https://github.com/manuel-rodriguezvillegas/visual_topological_slam"
+repository-code: "https://github.com/manuel-rodriguezvillegas/topo_sigma"
 license: MIT
 version: 1.0.0
 date-released: 2026-08-25

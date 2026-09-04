@@ -45,7 +45,7 @@ report meaningful covariance.
 ## Quick start
 
 ```bash
-cd /workspaces/visual_topological_slam/vts_devcontainer/vts_ws
+cd /workspaces/topo_sigma/vts_devcontainer/vts_ws
 
 colcon build --symlink-install
 source install/setup.bash

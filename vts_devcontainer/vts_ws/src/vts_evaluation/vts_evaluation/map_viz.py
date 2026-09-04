@@ -71,8 +71,12 @@ def render_map(
     gt_xy: np.ndarray | None = None,
     node_gt: dict[int, np.ndarray] | None = None,
     title: str | None = None,
+    legend_loc: str = "best",
+    legend_ncol: int = 1,
 ) -> bool:
-    """Render the map to ``out_path`` (PNG + PGF). Returns True on success.
+    """Render the map to ``out_path`` and export an editable SVG copy.
+
+    Returns ``True`` on success.
 
     When ``node_gt`` covers every node, nodes are painted at their
     ground-truth coordinates (paint-time only — the mapper placed them from
@@ -148,9 +152,11 @@ def render_map(
         ),
     ]
     ax.legend(
-        handles=room_handles + edge_handles, loc="best",
+        handles=room_handles + edge_handles, loc=legend_loc,
         fontsize=_LEGEND_FONTSIZE, title="Room" if has_room_labels else None,
-        title_fontsize=_LEGEND_TITLE_FONTSIZE, framealpha=0.9, ncol=1,
+        title_fontsize=_LEGEND_TITLE_FONTSIZE,
+        framealpha=0.9,
+        ncol=legend_ncol,
     )
 
     ax.set_aspect("equal", adjustable="datalim")

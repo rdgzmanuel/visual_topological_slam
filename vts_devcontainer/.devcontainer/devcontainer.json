@@ -7,8 +7,8 @@
             "WORKSPACE": "${containerWorkspaceFolder}"
         }
     },
-    "workspaceMount": "source=${localWorkspaceFolder}/..,target=/workspaces/visual_topological_slam,type=bind",
-    "workspaceFolder": "/workspaces/visual_topological_slam/vts_devcontainer",
+    "workspaceMount": "source=${localWorkspaceFolder}/..,target=/workspaces/topo_sigma,type=bind",
+    "workspaceFolder": "/workspaces/topo_sigma/vts_devcontainer",
     "remoteUser": "ros",
     "runArgs": [
         "--network=host",
